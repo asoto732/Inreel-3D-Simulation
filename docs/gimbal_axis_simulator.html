@@ -1,0 +1,1707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gimbal axis simulator</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b23; --panel-2: #1c232d; --border: #2a323d;
+    --text: #e6e8eb; --text-dim: #9aa4b1; --accent: #4f8ff0; --accent-2: #f0a24f;
+    --good: #4fbf7a; --warn: #e2574c; --mono: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; padding: 28px; }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  h1 { font-size: 19px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--text-dim); font-size: 13px; margin: 0 0 22px; line-height: 1.5; }
+  .grid { display: grid; grid-template-columns: 320px 1fr; gap: 20px; }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .axis-block { border: 1px solid var(--border); border-left: 3px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+  .axis-block[open] { padding-bottom: 14px; }
+  .axis-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 7px; }
+  summary.axis-title { cursor: pointer; list-style: none; user-select: none; margin-bottom: 0; }
+  .axis-block[open] > summary.axis-title { margin-bottom: 10px; }
+  summary.axis-title::-webkit-details-marker { display: none; }
+  summary.axis-title::before { content: '\25B8'; display: inline-block; width: 10px; font-size: 10px; color: var(--text-dim); transition: transform .15s ease; flex-shrink: 0; }
+  .axis-block[open] > summary.axis-title::before { transform: rotate(90deg); }
+  summary.axis-title:hover { color: var(--accent); }
+  .adv-tag { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; margin-left: auto; }
+  details.note { cursor: default; }
+  details.note summary { cursor: pointer; list-style: none; color: var(--text-dim); user-select: none; }
+  details.note summary::-webkit-details-marker { display: none; }
+  details.note summary::before { content: '\25B8 '; }
+  details.note[open] summary::before { content: '\25BE '; }
+  details.note .note-body { margin-top: 8px; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 18px; }
+  .toolbar button { margin-top: 0; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .field { margin-bottom: 12px; }
+  .field:last-child { margin-bottom: 0; }
+  label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }
+  label span.val { color: var(--text); font-family: var(--mono); }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  input[type="number"] { width: 100%; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 4px 6px; font-family: var(--mono); font-size: 12px; }
+  button {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim);
+    border-radius: 6px; padding: 5px 9px; font-size: 11.5px; cursor: pointer; margin-top: 8px;
+  }
+  button:hover { color: var(--text); border-color: var(--text-dim); }
+  .note { font-size: 11.5px; color: var(--text-dim); border-top: 1px dashed var(--border); margin-top: 14px; padding-top: 12px; line-height: 1.5; }
+  .canvas-wrap { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: #05070a; height: 460px; cursor: grab; }
+  .canvas-wrap:active { cursor: grabbing; }
+  .legend { display: flex; gap: 16px; font-size: 11.5px; color: var(--text-dim); margin-top: 10px; flex-wrap: wrap; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  td.mono { font-family: var(--mono); }
+  .tag { display: inline-block; font-size: 11px; font-family: var(--mono); padding: 2px 7px; border-radius: 5px; }
+  .tag.in { background: rgba(79,191,122,0.15); color: var(--good); }
+  .tag.out { background: rgba(226,87,76,0.15); color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Gimbal axis simulator</h1>
+  <p class="sub">
+    Move the axis sliders or drag the cable in the 3D view to see how the reel responds.
+    Section headers below expand for their controls; the deeper tuning/rationale panels start
+    collapsed so the basics aren't buried.
+  </p>
+  <details class="note" style="margin-top:-10px; margin-bottom: 18px; border-top: none;">
+    <summary>How the axes map to the 3D view</summary>
+    <div class="note-body">
+      Each axis is independent, matching updateDeflectionAxis() exactly, own zero offset, own
+      deadzone, own per-mille output. Rotation axes in the 3D view are perpendicular to the hanging
+      cable rather than in the same plane as it, outer ring sways it side to side, inner ring
+      (mounted on the outer ring) sways it forward and back.
+    </div>
+  </details>
+  <div class="toolbar">
+    <button id="expandAllBtn">Expand all sections</button>
+    <button id="collapseAllBtn">Collapse all sections</button>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <details class="axis-block" style="border-left-color:#4f8ff0;">
+        <summary class="axis-title">P-control tuning <span class="adv-tag">advanced</span></summary>
+        <div class="field">
+          <label>Full-scale deflection <span class="val" id="fsVal">45&deg;</span></label>
+          <input type="range" id="fullScale" min="15" max="180" step="5" value="45">
+        </div>
+        <div class="two-col">
+          <div class="field"><label style="margin:0">Contribution factor X</label><input type="number" id="contribX" value="0.12" step="0.01" min="0" max="1"></div>
+          <div class="field"><label style="margin:0">Contribution factor Y</label><input type="number" id="contribY" value="0.12" step="0.01" min="0" max="1"></div>
+        </div>
+        <div class="field"><label style="margin:0">Discard threshold</label><input type="number" id="discard" value="0.10" step="0.01" min="0" max="1"></div>
+        <div id="headroom" style="font-size:11.5px; margin-top:10px; padding:8px 10px; border-radius:6px; background:var(--panel-2); line-height:1.5;"></div>
+        <button id="fwBtn">Reset to today's firmware (180&deg;, 0.12, 0.10)</button>
+        <div class="note" style="margin-top:10px;">
+          Full-scale deflection is the angle that maps to the &plusmn;1000 per-mille vector.
+          The firmware divides by 32768 counts, which is 180&deg;, so 180 here reproduces it
+          exactly. The gimbal only travels &plusmn;45&deg; though, so at 180 the mechanism
+          never leaves the bottom quarter of the scale and the reel can never respond.
+          Every deadzone field below is labelled with its equivalent in degrees at the
+          current setting.
+        </div>
+      </details>
+
+      <details class="axis-block" open>
+        <summary class="axis-title"><span class="dot" style="background:#4f8ff0"></span>Axis 0, Vector X, lateral, symmetric, hard stop &plusmn;45&deg;</summary>
+        <div class="field">
+          <label>Deflection from zero <span class="val" id="a0Val">0&deg;</span></label>
+          <input type="range" id="a0Deg" min="-45" max="45" step="1" value="0">
+        </div>
+        <div class="two-col">
+          <div class="field"><label style="margin:0">Deadzone low <span class="val" id="a0LowDeg">&nbsp;</span></label><input type="number" id="a0Low" value="-100"></div>
+          <div class="field"><label style="margin:0">Deadzone high <span class="val" id="a0HighDeg">&nbsp;</span></label><input type="number" id="a0High" value="100"></div>
+        </div>
+        <div class="field"><label style="margin:0">Zero offset, raw deg</label><input type="number" id="a0Zero" value="180"></div>
+        <div class="note" style="margin-top:10px; border-top:none; padding-top:0;">Mechanical hard stop is a real constraint of the physical gimbal (&plusmn;45&deg; from zero), not a software placeholder like Axis 1's range below.</div>
+      </details>
+
+      <details class="axis-block" open>
+        <summary class="axis-title"><span class="dot" style="background:#f0a24f"></span>Axis 1, Vector Y, directional</summary>
+        <div class="field">
+          <label>Deflection from zero <span class="val" id="a1Val">0&deg;</span></label>
+          <input type="range" id="a1Deg" min="-180" max="180" step="1" value="0">
+        </div>
+        <div class="two-col">
+          <div class="field"><label style="margin:0">Deadzone low <span class="val" id="a1LowDeg">&nbsp;</span></label><input type="number" id="a1Low" value="-350"></div>
+          <div class="field"><label style="margin:0">Deadzone high <span class="val" id="a1HighDeg">&nbsp;</span></label><input type="number" id="a1High" value="350"></div>
+        </div>
+        <div class="field"><label style="margin:0">Zero offset, raw deg</label><input type="number" id="a1Zero" value="0"></div>
+        <button id="protoBtn">Try old prototype asymmetric Y (-100 / +600)</button>
+        <div class="note" style="margin-top:10px; border-top:none; padding-top:0;">Positive values swing the cable away from the rig marker in the 3D view, per your confirmation.</div>
+      </details>
+
+      <details class="axis-block" open>
+        <summary class="axis-title"><span class="dot" style="background:#9aa4b1"></span>Cable tension, drives the reel</summary>
+        <div class="field">
+          <label>Tension <span class="val" id="tensionVal">0%</span></label>
+          <input type="range" id="tension" min="0" max="100" step="1" value="0">
+        </div>
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+          <input type="checkbox" id="tensionDrive" checked style="width:auto;">
+          Drive Axis 1 (Y) from tension, disables its manual slider
+        </label>
+        <div class="two-col" style="margin-top:10px;">
+          <div class="field"><label style="margin:0">Cable paid out</label><input type="text" id="payoutVal" readonly value="0.00 u"></div>
+          <div class="field"><label style="margin:0">Max cable length</label><input type="number" id="maxPayout" value="2.5" step="0.1"></div>
+        </div>
+        <div class="note" style="margin-top:0; border-top:none; padding-top:0;">
+          Tension to deflection is a straight line guess, 100% tension = 90&deg; deflection away
+          from the rig, not a modeled cable stiffness relationship. Nothing in the repo defines
+          that curve yet, this is a placeholder to make the loop visible, not a verified mapping.
+        </div>
+      </details>
+
+      <details class="note">
+        <summary>Deadzone defaults &amp; hard-stop reference</summary>
+        <div class="note-body">
+          Deadzone defaults match cablereel_signals.xml (X &plusmn;100, Y &plusmn;350, both symmetric
+          today). Inside the deadzone the published vector is hard clipped to 0, not a gradient.
+          Axis 0 (X) is clamped to &plusmn;45&deg;, the real mechanical hard stop of the gimbal.
+          Axis 1 (Y)'s &plusmn;180&deg; range is still a software assumption -- its mechanical
+          hard stop isn't defined yet.
+        </div>
+      </details>
+    </div>
+
+    <div class="panel" style="display:flex; flex-direction:column; gap:16px;">
+      <div class="canvas-wrap" id="canvasWrap"></div>
+      <div class="note" style="margin-top:0; border-top:none; padding-top:0;">
+        Drag the white cable directly to set both axes at once (grab anywhere near its free
+        end). Click/drag empty space to orbit the camera instead. The sliders stay in sync
+        either way.
+      </div>
+      <div class="legend">
+        <span><span class="dot" style="background:#2f3a4a"></span>Rig, gimbal mounts here</span>
+        <span><span class="dot" style="background:#4f8ff0"></span>Outer ring, side to side sway</span>
+        <span><span class="dot" style="background:#f0a24f"></span>Inner ring, forward/back sway</span>
+        <span><span class="dot" style="background:#5a6473"></span>Reel barrel</span>
+        <span><span class="dot" style="background:#cfd4da"></span>Cable on the ground</span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Axis</th><th>Adjusted deg</th><th>Raw counts</th><th>Per mille, pre deadzone</th><th>Deadzone</th><th>Published vector</th></tr>
+        </thead>
+        <tbody id="outputRows"></tbody>
+      </table>
+
+      <details class="axis-block" style="margin-bottom:0;" open>
+        <summary class="axis-title">Reel trim output</summary>
+        <table>
+          <tbody>
+            <tr><td>Contribution, |X|&times;0.12 + Y&times;0.12</td><td class="mono" id="rtContribution">0.000</td></tr>
+            <tr><td>Ramped, smoothing gain 0.04</td><td class="mono" id="rtRamped">0.000</td></tr>
+            <tr><td>Controller value, integrated</td><td class="mono" id="rtController">0.000</td></tr>
+            <tr><td>Duty cycle</td><td class="mono" id="rtDuty">0%</td></tr>
+            <tr><td>Discard threshold</td><td class="mono">|value| &lt; 0.10 &rarr; 0</td></tr>
+            <tr><td>Reel command</td><td class="mono" id="rtCommand">HOLD</td></tr>
+          </tbody>
+        </table>
+        <div id="reelState" style="margin-top:12px; border:1px solid var(--border); border-radius:8px; padding:14px; text-align:center; transition:background .1s, border-color .1s;">
+          <div id="reelStateText" style="font-size:20px; font-weight:600; letter-spacing:0.06em; font-family:var(--mono);">HOLD</div>
+          <div id="reelStateSub" style="font-size:11.5px; color:var(--text-dim); margin-top:5px;">both outputs low, reel stationary</div>
+        </div>
+        <div style="display:flex; gap:14px; margin-top:10px;">
+          <div style="flex:1; text-align:center; border:1px solid var(--border); border-radius:8px; padding:10px;">
+            <div id="ledUnwind" style="width:14px; height:14px; border-radius:50%; margin:0 auto 7px; background:#2a323d; transition:background .05s, box-shadow .05s;"></div>
+            <div style="font-size:11px; color:var(--text-dim); font-family:var(--mono);">DO_Motor_Unwind</div>
+          </div>
+          <div style="flex:1; text-align:center; border:1px solid var(--border); border-radius:8px; padding:10px;">
+            <div id="ledWind" style="width:14px; height:14px; border-radius:50%; margin:0 auto 7px; background:#2a323d; transition:background .05s, box-shadow .05s;"></div>
+            <div style="font-size:11px; color:var(--text-dim); font-family:var(--mono);">DO_Motor_Wind</div>
+          </div>
+        </div>
+        <details class="note">
+          <summary>How the reel command &amp; PWM flashing work</summary>
+          <div class="note-body">
+            Runs as a live integrating loop, same as the firmware's per-cycle P-controller, so it
+            ramps toward the target rather than jumping. Gain is 0.02 normally, 0.03 when reversing
+            direction, 0.04 when decelerating into reverse, per control.cpp. Lateral (X) deflection
+            only ever biases toward unwind, only Y can drive wind, and it's a narrow margin against
+            the 0.10 discard threshold, that asymmetry is real, not a sim bug.
+            <br><br>
+            UNREEL / REEL IN / HOLD is derived from the firmware's two real digital outputs,
+            DO_Motor_Unwind and DO_Motor_Wind. HOLD isn't its own signal, it's the implicit state
+            when both are low, same as the hardware. The active states flash at the real PWM period
+            (1000 ms, Deflection_Trim_PWMPeriod_ms) with on-time equal to the duty cycle, so a low
+            duty blinks briefly and 100% sits solid, that flashing is the actual output waveform
+            rather than an animation. Reaching a non-HOLD state at all needs the published vector
+            out of its deadzone first, X past 18&deg; or Y past 63&deg;, then the ramp has to climb
+            past the 0.10 discard threshold.
+          </div>
+        </details>
+      </details>
+
+      <details class="axis-block" style="border-left-color:#4fbf7a; margin-bottom:0;">
+        <summary class="axis-title">Cable capacity interlock <span class="adv-tag">advanced</span> <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; simulated drum encoder, per the council review on adding one</span></summary>
+        <div class="two-col">
+          <div class="field"><label style="margin:0">Turns remaining <span class="val" id="turnsVal">&nbsp;</span></label></div>
+          <div class="field"><label style="margin:0">Layer <span class="val" id="layerVal">&nbsp;</span></label></div>
+        </div>
+        <div class="field">
+          <label>Spooled length <span class="val" id="spooledLenVal">&nbsp;</span></label>
+          <div style="height:8px; border-radius:4px; background:var(--panel-2); overflow:hidden; margin-top:4px;">
+            <div id="capacityBar" style="height:100%; width:100%; background:var(--good); transition:width .1s, background .1s;"></div>
+          </div>
+        </div>
+        <div class="two-col">
+          <div class="field"><label style="margin:0">Warn threshold, %</label><input type="number" id="warnPct" value="25" step="1" min="0" max="100"></div>
+          <div class="field"><label style="margin:0">Block threshold, %</label><input type="number" id="blockPct" value="20" step="1" min="0" max="100"></div>
+        </div>
+        <div class="field"><label style="margin:0">Rearm margin, % <span class="val" id="rearmMarginLabel">&nbsp;</span></label><input type="number" id="rearmMargin" value="2" step="0.5" min="0" max="20"></div>
+
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:8px;">
+          <input type="checkbox" id="encoderFault" style="width:auto;">
+          Simulate encoder fault (fails closed, same posture as DS-SF-02)
+        </label>
+        <button id="calibrateBtn">Zero / calibrate at full spool</button>
+
+        <div id="trammingState" style="margin-top:12px; border:1px solid var(--border); border-radius:8px; padding:14px; text-align:center; transition:background .1s, border-color .1s;">
+          <div id="trammingStateText" style="font-size:18px; font-weight:600; letter-spacing:0.04em; font-family:var(--mono);">TRAM ALLOWED</div>
+          <div id="trammingStateSub" style="font-size:11.5px; color:var(--text-dim); margin-top:5px;"></div>
+        </div>
+
+        <div class="axis-title" style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">Drum inertia dynamics <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; turns above are now driven by this, not a canned duty-proportional rate</span></div>
+        <div class="two-col">
+          <div class="field"><label style="margin:0">Cable tension, lbf</label><input type="number" id="cableTensionLbf" value="200" step="10" min="0"></div>
+          <div class="field"><label style="margin:0">Max drum speed, RPM</label><input type="number" id="maxDrumRpm" value="13.9" step="0.1" min="0.1"></div>
+        </div>
+        <div class="two-col">
+          <div class="field"><label style="margin:0">Drum speed <span class="val" id="drumRpmVal">0.0 RPM</span></label></div>
+          <div class="field"><label style="margin:0">Drum inertia I(L) <span class="val" id="drumInertiaVal">&nbsp;</span></label></div>
+        </div>
+
+        <details class="note">
+          <summary>How turns/inertia/tension are modeled</summary>
+          <div class="note-body">
+          Turns-per-layer is width &divide; cable OD (1.835m / 0.0538m &asymp;
+          <span id="wrapsPerLayerNote"></span> wraps); each layer's radius grows by one
+          cable OD outward from the core, so length-per-turn increases per layer &mdash;
+          the naive "turns &times; circumference" shortcut the council flagged as the
+          false-sense-of-safety failure mode is NOT what this uses. Total capacity, worked
+          back from the real 359.4m spec through this same model, comes out to
+          <span id="totalTurnsNote"></span> turns across <span id="totalLayersNote"></span>
+          layers, reconciling to <span id="reconciledLenNote"></span> m.
+          <br><br>
+          This box is informational only: the sim has no tramming/drive feature to actually
+          gate, it's a live readout of what a real interlock built this way would report and
+          whether it would currently allow tramming. The rearm margin exists because a single
+          hard threshold chatters right at the boundary and gets routed around by operators
+          &mdash; exactly the nuisance-lockout failure mode the council flagged.
+          <br><br>
+          Turn count is no longer a canned duty-proportional rate (that was the original,
+          admittedly unphysical placeholder) &mdash; it's now integrated from real torque vs.
+          load each frame: net torque = (duty% &times; motor stall torque &times; gear ratio
+          &times; efficiency, read live from the Motor &amp; drum torque check panel below)
+          combined with a cable-tension load torque (tension &times; current wrap radius,
+          defaulting to the 200&nbsp;lbf the vendor sheet recommends), divided by I(L) from the
+          same drum-inertia model as that panel, integrated over real elapsed time (dt from
+          <span class="mono">performance.now()</span>, clamped to 0.1s so a backgrounded tab
+          doesn't produce a huge catch-up jump on return). This is why loading the "Sandvik reel
+          motor" preset below now visibly changes how fast the drum spins up, and why a heavily
+          spooled drum (high I) accelerates more sluggishly than a nearly empty one at the same
+          duty &mdash; that lag didn't exist before.
+          <br><br>
+          Tension is modeled asymmetrically (fixed 2026-08-06, after verification showed the
+          real Sandvik motor spec vs. real 200&nbsp;lbf tension couldn't overcome each other in
+          EITHER direction under the earlier symmetric model, so unwind could never start at
+          all): tension has a fixed physical direction, toward unwind, since it's caused by the
+          rig pulling cable off the drum, not a friction-like force that flips sign with the
+          drum's current motion. During REEL IN it opposes the motor as a real load (and if
+          tension wins, the drum gets dragged into unwinding despite the wind command &mdash; a
+          real failure mode, not clamped away). During UNREEL it now ASSISTS the commanded
+          torque instead of resisting it, since a real hydraulic unreel is more a controlled
+          release than an active drive. During HOLD, a stationary drum is still treated as fully
+          held against tension (no counterbalance/holding-valve spec exists to model a leak or
+          creep rate, and real hydraulic reel drives normally include exactly that kind of valve
+          for this reason) &mdash; there's also no separate friction term. Both left as open
+          items rather than invented numbers. Max drum speed is a hard cap from the vendor
+          sheet's flow-limited peak reel RPM, since the torque model itself has no speed
+          dependence (accurate near stall per the existing back-EMF caveat below, not accurate
+          near the real speed limit without this cap).
+          </div>
+        </details>
+      </details>
+
+      <details class="axis-block" style="border-left-color:#e2574c; margin-bottom:0;">
+        <summary class="axis-title">Motor &amp; drum torque check <span class="adv-tag">advanced</span> <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; real Sandvik motor spec available, load it below (defaults below are still illustrative placeholders)</span></summary>
+        <div class="field">
+          <label>Cable currently spooled <span class="val" id="spoolLenVal">0 m</span></label>
+          <input type="range" id="spoolLen" min="0" max="1000" step="1" value="500">
+        </div>
+        <div class="two-col">
+          <div class="field"><label style="margin:0">Motor stall torque, Nm</label><input type="number" id="motorStallTorque" value="50" step="1" min="0"></div>
+          <div class="field"><label style="margin:0">Gear ratio, N:1</label><input type="number" id="gearRatio" value="30" step="1" min="1"></div>
+        </div>
+        <div class="field"><label style="margin:0">Drivetrain efficiency</label><input type="number" id="driveEff" value="0.85" step="0.05" min="0.05" max="1"></div>
+
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:4px;">
+          <input type="checkbox" id="dutyOverride" style="width:auto;">
+          Test a specific duty cycle instead of the live one above
+        </label>
+        <div class="field" style="margin-top:8px;">
+          <label>Test duty cycle <span class="val" id="dutyOverrideVal">50%</span></label>
+          <input type="range" id="dutyOverrideSlider" min="0" max="100" step="1" value="50" disabled>
+        </div>
+
+        <button id="hydraulicBtn">Load 5 HP hydraulic motor (illustrative)</button>
+        <button id="sandvikHydraulicBtn">Load Sandvik reel motor (theoretical, from vendor calc sheet)</button>
+
+        <div id="torqueCheck" style="font-size:11.5px; margin-top:10px; padding:8px 10px; border-radius:6px; background:var(--panel-2); line-height:1.6;"></div>
+        <details class="note">
+          <summary>How this torque check works</summary>
+          <div class="note-body">
+          Drum inertia I(L) uses the same closed-form model as
+          scripts/reel_inertia_model.py (continuous-annulus approximation, verified there to
+          agree with the discrete layer-by-layer method to &lt;0.1%), on the real Sandvik drum
+          geometry (62in core, 72.25in width, 72in flange) and the real Nexans 36-517-002 cable
+          spec. That geometry is real. The three fields below (motor stall torque, gear ratio,
+          drivetrain efficiency) default to round placeholder numbers so the mechanism is
+          visible even with nothing real entered &mdash; but a real spec now exists, "Load
+          Sandvik reel motor" below fills them from a real vendor calc sheet (hydraulic_calcs,
+          2026-08-06): a hydraulic reel motor driving the drum through a 22:32 sprocket chain,
+          theoretical torque/speed calculated from peak circuit pressure and motor displacement
+          (the sheet also has a real Eaton vendor spec-sheet column, which runs higher since it
+          reflects real motor losses an ideal calc doesn't capture &mdash; theoretical was chosen
+          as the more conservative default). One open item from that sheet: its cable diameter
+          (2.2in) doesn't quite match the 2.12in Nexans spec the drum/capacity-interlock model
+          above uses (~4% off, not rounding noise) &mdash; unreconciled, flagged for whoever can
+          confirm which cable spec is authoritative. Available
+          torque at the drum shaft is computed as duty% &times; stall torque &times; gear ratio
+          &times; efficiency (a stall-torque model: assumes PWM duty maps linearly to average
+          torque at zero/low speed, no back-EMF correction). This box exists to show HOW that
+          comparison works and make the missing inputs obvious, not to assert whether 12% duty
+          is enough &mdash; it isn't, until real numbers replace the placeholders above.
+          <br><br>
+          "Test a specific duty cycle" decouples this box from the sliders above, so you can ask
+          "what would 50% duty do" without having to actually drive the encoders to whatever angle
+          happens to produce 50%. Off (default), it reads the reel trim loop's live duty every
+          frame, same as before.
+          <br><br>
+          The 5&nbsp;HP hydraulic preset fills in an illustrative stall torque computed from
+          power and an assumed rated speed (torque = power &divide; &omega;, 5&nbsp;HP =
+          3728.5&nbsp;W at an assumed 500&nbsp;RPM &rarr; ~71&nbsp;Nm), plus a modest gear ratio
+          and efficiency for a close-coupled hydraulic drive. The 500&nbsp;RPM is an assumption,
+          not a datasheet number &mdash; no real hydraulic motor spec exists either. Also worth
+          knowing: a hydraulic motor doesn't have back-EMF at all, so unlike the DC case, its real
+          torque stays roughly flat across its speed range instead of tapering to zero at some
+          no-load RPM &mdash; that specific caveat from the electric-motor model doesn't apply
+          here, though the duty%-as-average-torque approximation still does, since it depends on
+          how the real DO_Motor_Wind/DO_Motor_Unwind outputs actually drive the hydraulics (a
+          time-proportioned valve vs. something else isn't confirmed).
+          </div>
+        </details>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+const toRad = d => d * Math.PI / 180;
+const wrap16 = v => ((v % 65536) + 65536) % 65536;
+
+function lineSegmentScale(value, inMin, inMax, outMin, outMax) {
+  let t = (value - inMin) / (inMax - inMin);
+  t = Math.max(0, Math.min(1, t));
+  return outMin + t * (outMax - outMin);
+}
+
+// `fullScaleDeg` is the deflection angle that maps to the +-1000 per-mille
+// full-scale vector. The firmware divides signedCounts by 32768, which is
+// 180 deg of encoder travel -- so today's behaviour is fullScaleDeg = 180,
+// and passing 180 here reproduces it EXACTLY (32768 = 180/360*65536).
+//
+// That default is the root of why the reel never responds: the gimbal is
+// mechanically hard-stopped at +-45 deg, so the real mechanism only ever
+// exercises the bottom quarter of a scale calibrated for a half turn. At its
+// 45 deg limit an axis reaches raw01perc 250 of a possible 1000, the vector
+// rescale turns that into ~167, the contribution into ~0.020 -- five times
+// under the 0.10 discard threshold. No deadzone value fixes that; raising
+// the deadzone only makes it smaller. Normalising against the REAL travel
+// instead is the fix, and it also makes the deadzone numbers in the config
+// mean what people assume they mean (with fullScaleDeg=45, +-100 per-mille
+// is +-4.5 deg rather than +-18 deg).
+//
+// Exposed as a control rather than hardcoded so today's firmware behaviour
+// (180) and the proposed behaviour (45) can be compared side by side.
+function computeAxis(deflectionDeg, zeroOffsetDeg, low, high, fullScaleDeg = 180) {
+  const zeroOffsetCounts = wrap16(Math.round(zeroOffsetDeg / 360 * 65536));
+  const rawCounts = wrap16(zeroOffsetCounts + Math.round(deflectionDeg / 360 * 65536));
+  const adjustedCounts = wrap16(rawCounts - zeroOffsetCounts);
+  const degOut = adjustedCounts * (360.0 / 65536.0);
+  const signedCounts = adjustedCounts > 32768 ? adjustedCounts - 65536 : adjustedCounts;
+  const fullScaleCounts = Math.max(1, fullScaleDeg / 360 * 65536);
+  // Clamped because a real axis can be pushed past its full-scale reference
+  // (nothing stops the slider), and an unclamped vector beyond +-1000 would
+  // silently exceed the per-mille contract the downstream signal declares.
+  const raw01perc = Math.max(-1000, Math.min(1000, Math.trunc(signedCounts * 1000 / fullScaleCounts)));
+  const vector = raw01perc >= 0
+    ? lineSegmentScale(raw01perc, high, 1000, 0, 1000)
+    : lineSegmentScale(raw01perc, -1000, low, -1000, 0);
+  const inDeadzone = raw01perc >= low && raw01perc <= high;
+  return { rawCounts, degOut, raw01perc, vector: Math.round(vector), inDeadzone };
+}
+
+// Per-mille <-> degrees helper, so the UI can label every deadzone field with
+// what it actually means in degrees. The whole 45-vs-36-deg confusion came
+// from those fields being unlabelled per-mille.
+const permilleToDeg = (p, fullScaleDeg) => p / 1000 * fullScaleDeg;
+
+// ---------- Three.js scene ----------
+const wrapEl = document.getElementById('canvasWrap');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(42, wrapEl.clientWidth / wrapEl.clientHeight, 0.1, 100);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(wrapEl.clientWidth, wrapEl.clientHeight);
+wrapEl.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xaabbdd, 0x201a12, 1.1));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+dirLight.position.set(3, 4, 5);
+scene.add(dirLight);
+
+const grid = new THREE.GridHelper(4, 8, 0x2a323d, 0x1c232d);
+scene.add(grid);
+
+const PIVOT_Y = 0.75; // hoisted above the yoke-loading block below, which needs it synchronously
+
+// ---------- Real yoke/frame CAD (cad/*.stl), with procedural fallback ----------
+// Pivot alignment, corrected 2026-07-23 using EXACT coordinates read from the
+// source CAD tool (not mesh-forensics estimates -- an earlier proximity-based
+// guess turned out to find an incidental near-touch, not the true mate; a
+// direct check showed frame is actually closer, in the raw STL export, to
+// the WRONG boss pair than the one the user's reference photos show as real).
+//
+// Outer yoke shaft-hole pivot (axis-0, mates with frame), native inches:
+//   Left  (7.1061, -2.2958, 1.5000)
+//   Right (7.1061, 17.1822, 1.5000)
+//   -> fixed at X=7.1061, Z=1.5000, runs along Y.
+// Mounting frame leg-hole pivot (same physical axis), native inches:
+//   Left  (3.3266, -5.7665, -14.1875)
+//   Right (3.3266, 13.2085, -14.1875)
+//   -> fixed at X=3.3266, Z=-14.1875, runs along Y.
+// Frame and outer_yoke are NOT in a shared coordinate system (unlike the
+// earlier assumption) -- FRAME_NATIVE_OFFSET translates frame's leg-hole
+// axis onto outer_yoke's shaft-hole axis exactly (X,Z terms) with the Y
+// term aligned via the two pairs' midpoints (their spans differ by ~0.5in,
+// so a pure translation can't satisfy both endpoints exactly; splitting the
+// residual is the least-bad option for a single rigid transform).
+//
+// axis-1 (inner yoke mating pair), also corrected with exact CAD coordinates
+// (2026-07-23, same session as axis-0 above):
+// Outer yoke female pivot holes, native inches:
+//   Left  (13.1061, 7.4432, 1.5000)
+//   Right ( 1.1061, 7.4432, 1.5000)
+//   -> fixed at Y=7.4432, Z=1.5000, runs along X. Midpoint X=7.1061 and this
+//   Y=7.4432 both match axis-0's numbers exactly (NATIVE_PIVOT.x from the
+//   shaft-hole pair, and the shaft-hole pair's own Y-midpoint) -- strong
+//   cross-check that both axes truly intersect at one consistent point.
+// Inner yoke male stub shafts, native inches:
+//   Left  ( 3.0700, -8.1604, 10.7500)
+//   Right (18.4697, -8.1604, 10.7500)
+//   -> fixed at Y=-8.1604, Z=10.7500, runs along X (same direction as the
+//   outer_yoke pair -- no rotation needed, just translation, same as axis-0).
+// Unlike axis-0, the two pairs' spans differ substantially (inner_yoke stub
+// span 15.40in vs outer_yoke hole span 12.00in, a 3.40in difference) --
+// aligning via midpoints (least-bad single-rigid-transform choice, same
+// method as axis-0) leaves a real ~1.7in (~43mm) residual per end, much
+// larger than axis-0's ~6mm. Neither direct left-to-left nor crossed
+// left-to-right point correspondence explains this away (both give worse,
+// inconsistent numbers), so this isn't a left/right mislabeling -- more
+// likely the "shaft center" a user clicks in CAD isn't the same reference
+// as a hole's center (a shaft extends along a length and inserts partway;
+// its own midpoint doesn't have to coincide with where it seats). Flagged
+// for the user rather than silently accepted.
+const IN_TO_M = 0.0254;
+const NATIVE_PIVOT = { x: 7.1061, y: 7.4432, z: 1.5000 };
+const FRAME_NATIVE_OFFSET = {
+  x: 7.1061 - 3.3266,
+  y: ((-2.2958 + 17.1822) / 2) - ((-5.7665 + 13.2085) / 2),
+  z: 1.5000 - (-14.1875),
+};
+const INNER_YOKE_NATIVE_OFFSET = {
+  x: 7.1061 - (3.0700 + 18.4697) / 2,
+  y: 7.4432 - (-8.1604),
+  z: 1.5000 - 10.7500,
+};
+const stlLoader = new THREE.STLLoader();
+
+// Native CAD axes -> sim axes: native X (axis-1 direction) stays sim X,
+// native Z (ring thickness, vertical-ish) becomes sim Y (up), native Y
+// (axis-0 direction) becomes -sim Z -- a proper rotation about X (Rx(-90deg):
+// (x,y,z)->(x,z,-y), determinant +1, not a mirror), centered on
+// NATIVE_PIVOT, scaled to meters. Verified against the frame mesh: native Z
+// decreases toward the leg tips, which must map to LOWER world Y (floor
+// side) -- an earlier sign choice had this inverted (legs mapped above the
+// top bar) and was caught by checking the loaded mesh's world bounding box.
+// `worldY` (only used for the static frame, added directly to `scene`
+// rather than a pivoted group) adds PIVOT_Y since the frame doesn't get
+// that for free the way outerGroup/innerGroup's own .position does.
+// `flip180X` (about the pivot, negates native y/z -- reverses which way the
+// legs point) and `flip180Z` (about the pivot, negates native x/y --
+// reverses which end of an X-axis-aligned part, e.g. the inner yoke's stub
+// shaft, faces which way) are both proper 180deg rotations (det=+1) about
+// the pivot itself, not the STL's raw origin -- centering on NATIVE_PIVOT
+// happens BEFORE either flip, so the pivot/boss point stays fixed and only
+// the rest of the part swings around it. Rotating about the raw origin
+// instead was tried first for the frame and left it disconnected from the
+// yoke, caught by rendering the combined assembly before touching live JS.
+// Live user feedback (screenshot + annotation, 2026-07-23) on the frame's
+// orientation confirmed flip180X=false (reverted) was correct. `rotateY90`
+// is a further cosmetic correction requested for the outer yoke only: a
+// 90deg rotation about the sim's vertical (up) axis, applied AFTER the
+// native->sim mapping (in sim-space, where "up" is unambiguous) -- swings
+// the ring's long axis between left-right and forward-back while keeping it
+// flat/horizontal, per explicit user confirmation this is NOT a Z-axis
+// (depth) rotation.
+// `axis1Vertical`: found (2026-07-23) that `rotateY90` -- a post-hoc rotation
+// about sim-up applied to fix outer_yoke/frame's visual yaw -- was silently
+// moving axis-0 (native Y, frame<->outer_yoke) off of world Z, which is
+// outerGroup's actual (unchanged) rotation axis. Verified directly against
+// the live deployed function (not a reimplementation, which is what missed
+// this the first time): with rotateY90, axis-0's shaft-hole points came out
+// at simX=+-0.247 (varying), simY=0, simZ=~0 -- i.e. sitting on the X axis,
+// NOT on Z where outerGroup actually rotates. That's a real bug, independent
+// of today's request. `axis1Vertical` is the real fix for BOTH problems at
+// once: it leaves native Y -> simZ untouched (axis-0 stays exactly on Z, so
+// frame's un-rotated leg-hole axis, also on Z, still connects), and re-routes
+// native X (axis-1's varying direction) to simY instead of simX, putting the
+// outer_yoke<->inner_yoke pivot on the vertical axis as requested. `rotateY90`
+// is removed from frame and outer_yoke's calls (no longer valid/needed).
+// `rotateY180`: removing rotateY90 (above) also removed the yaw correction
+// it had accidentally been providing for frame/outer_yoke's facing
+// direction, on top of fixing the axis-0 bug -- user reported (2026-07-23)
+// the gimbal needed to face away from the rig again, "like before". A 90deg
+// yaw is what broke axis-0 (moves the Z-axis to the X-axis), but a 180deg
+// yaw about sim-up does NOT: Ry(180) is (simX,simY,simZ)->(-simX,simY,-simZ),
+// which maps the Z-axis (simX=0,simZ=any) to itself (simX=-0=0, simZ=-any is
+// still "any", just sign-flipped -- same line) and the Y-axis (simX=simZ=0)
+// to itself too (both stay 0). Proper rotation (det=+1: diag(-1,1,-1) has
+// det=(-1)(1)(-1)=1). Applied post-mapping (sim-space) so it composes
+// cleanly with axis1Vertical, same pattern as the old rotateY90.
+// `rotateY90` (reintroduced 2026-07-24, NOT the same as the buggy one removed
+// above): user wants the frame's leg/pivot line to run along world X instead
+// of world Z (per written requirement + hand sketch: "legs symmetric with the
+// X axis", confirmed top-down view showed the real CAD frame's two leg-holes
+// spread along Z, mirror-symmetric about X=0 -- a genuine rectangular-frame
+// shape, not a bug -- and the ask is to yaw the WHOLE assembly 90deg so that
+// spread lands on X instead). The earlier rotateY90 broke axis-0 because it
+// was applied to only frame+outer_yoke, inconsistently, with nothing else
+// updated to match. This time the SAME +90deg (Ry(90): x'=z, z'=-x, det=+1)
+// is applied uniformly to all three parts' final sim-space output (frame,
+// outer_yoke, AND inner_yoke, after axis1Vertical/rotateY180), which keeps
+// every existing pivot-to-pivot alignment intact -- it's a single rigid
+// rotation of the already-correctly-assembled unit, not a per-part hack.
+// Two dependent values elsewhere MUST move in lockstep with this flag:
+// outerGroup's slider-driven rotation axis (was world Z, now world X -- Ry(90)
+// applied to the old axis vector (0,0,1) gives exactly (1,0,0)), and the
+// cable/hub/dragHandle local offset (was local X=+0.273, now local Z=-0.273,
+// same Ry(90) applied to the old offset point). Verified in Python
+// (scripts/render_combined.py-style top-down render) before this edit: pivot
+// circles still coincide after the yaw, and the numeric swing check confirms
+// Axis 1 (Y, directional) still moves the cable tip toward more-negative Z
+// (away from rig) as it increases, and Axis 0 (X, lateral) still moves pure
+// X with Y/Z held fixed -- both match the pre-existing documented behavior.
+// `rotateX90` (2026-07-24): user asked for the outer yoke ring's plane to
+// CONTAIN the Y-axis (their "Y-axis" = the toward/away-from-rig line, world Z
+// here) at zero deflection, instead of the ring standing vertical with that
+// axis punching perpendicularly through it. The ring's plane contains both
+// of its own pivot axes, so this is a 90deg rotation about axis-0 (world X,
+// which outerGroup rotates about): the ring's plane goes from X-up to X-Z,
+// axis-0 stays exactly on X (so the frame connection is untouched, and the
+// frame itself must NOT get this flag), and axis-1 swings from vertical onto
+// world Z. Rx(-90) specifically -- `y'=z, z'=-y`, det=+1 -- chosen over
+// Rx(+90) because it puts the inner yoke's cable tube pointing DOWN rather
+// than up, so the cable still hangs below the gimbal.
+// Two dependent values move in lockstep, same as rotateY90 before it:
+// innerGroup's rotation axis (local Y -> local Z, following axis-1), and the
+// cable/hub/dragHandle anchor (local Z=-0.273 -> local Y=-0.273, following
+// the tube end). Both were checked to keep each slider actually controllable
+// -- the cable anchor sits off both rotation axes, so neither the X nor the
+// Y channel is frozen the way axis-1 froze the cable before iteration 12.
+// `rotateZ180` (2026-07-24): user reported the outer yoke model itself reads
+// upside down once the ring went horizontal. Turning it over is a 180deg
+// rotation, and there are two that do it -- Rx(180) (negates simY,simZ) and
+// Rz(180) (negates simX,simY). They are NOT interchangeable here: Rx(180)
+// moves axis-1's female holes from Z=-0.1524/+0.1524 to +0.1524/-0.1524,
+// which would silently undo the stub-to-hole pairing set by flip180Z:false
+// just above. Rz(180) leaves those holes at exactly the same Z (they sit at
+// simX=simY=0, the very components it negates) and only mirrors axis-0's
+// shafts along their own shared line -- so both connections and the chosen
+// pairing survive untouched. Rz(180) it is. Proper rotation, det=+1
+// (diag(-1,-1,1)). Applied last, in sim space, about the part's local origin
+// (which is the pivot itself for the yokes, since they pass worldY=0).
+function transformYokeGeometry(geo, { offset = { x: 0, y: 0, z: 0 }, worldY = 0, flip180X = false, flip180Z = false, axis1Vertical = false, rotateY180 = false, rotateY90 = false, rotateX90 = false, rotateZ180 = false } = {}) {
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i) + offset.x - NATIVE_PIVOT.x;
+    let y = pos.getY(i) + offset.y - NATIVE_PIVOT.y;
+    let z = pos.getZ(i) + offset.z - NATIVE_PIVOT.z;
+    if (flip180X) { y = -y; z = -z; }
+    if (flip180Z) { x = -x; y = -y; }
+    let simX, simY, simZ;
+    if (axis1Vertical) {
+      simX = IN_TO_M * -z;
+      simY = IN_TO_M * x + worldY;
+      simZ = IN_TO_M * -y;
+    } else {
+      simX = IN_TO_M * x;
+      simY = IN_TO_M * z + worldY;
+      simZ = IN_TO_M * -y;
+    }
+    if (rotateY180) { simX = -simX; simZ = -simZ; }
+    if (rotateY90) { const nx = simZ, nz = -simX; simX = nx; simZ = nz; }
+    if (rotateX90) { const ny = simZ, nz = -simY; simY = ny; simZ = nz; }
+    if (rotateZ180) { simX = -simX; simY = -simY; }
+    pos.setXYZ(i, simX, simY, simZ);
+  }
+  pos.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function loadYokePart(url, parent, transformOpts, material, fallback) {
+  stlLoader.load(url,
+    (geo) => {
+      transformYokeGeometry(geo, transformOpts);
+      parent.add(new THREE.Mesh(geo, material));
+      if (fallback) fallback.visible = false;
+    },
+    undefined,
+    (err) => console.warn(`Failed to load ${url}, keeping procedural placeholder:`, err)
+  );
+}
+
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x394451, roughness: 0.6, metalness: 0.3 });
+const frame = new THREE.Group();
+const frameTop = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.18, 0.9), frameMat);
+frameTop.position.set(0, 1.7, 0);
+frame.add(frameTop);
+[-0.7, 0.7].forEach(x => {
+  const leg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.9, 0.16), frameMat);
+  leg.position.set(x, 1.25, 0);
+  frame.add(leg);
+});
+scene.add(frame);
+loadYokePart('../cad/mounting_frame.stl', scene, { offset: FRAME_NATIVE_OFFSET, worldY: PIVOT_Y, flip180X: false, rotateY180: true, rotateY90: true }, frameMat, frame);
+
+// Rig marker, the block the gimbal is actually bolted to. Placed so that
+// positive Axis1 (Vector Y) sways the cable toward -Z, away from this block.
+const rigMat = new THREE.MeshStandardMaterial({ color: 0x2f3a4a, roughness: 0.7, metalness: 0.2 });
+const rigMarker = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 1.0), rigMat);
+rigMarker.position.set(0, 1.75, 2.1);
+scene.add(rigMarker);
+
+const outerGroup = new THREE.Group();
+outerGroup.position.set(0, PIVOT_Y, 0);
+scene.add(outerGroup);
+
+// Ring cross-section styled after the TURCK RI360P0-QR24M0-CNX4-2H1150 datasheet
+// (edb_1590914_eng_us.pdf): bore/OD = 22/77, bolt PCD/OD = 65/77, 3 bolts at 120 deg.
+// Overall ring radius/thickness kept the same as the old TorusGeometry values so
+// the camera framing and axis behavior are unchanged -- only the cross-section shape
+// (a flat disc with the real bore + 3-bolt pattern) is new, not the scene scale.
+function makeQR24Disc(outerR, thickness, color) {
+  const BORE_RATIO = 22 / 77;
+  const PCD_RATIO = 65 / 77;
+  const BOLT_RATIO = (4.3 / 2) / 77;
+
+  const shape = new THREE.Shape();
+  shape.absarc(0, 0, outerR, 0, Math.PI * 2, false);
+  const bore = new THREE.Path();
+  bore.absarc(0, 0, outerR * BORE_RATIO, 0, Math.PI * 2, true);
+  shape.holes.push(bore);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    const hole = new THREE.Path();
+    hole.absarc(Math.cos(a) * outerR * PCD_RATIO, Math.sin(a) * outerR * PCD_RATIO, outerR * BOLT_RATIO, 0, Math.PI * 2, true);
+    shape.holes.push(hole);
+  }
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false });
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.4 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.geometry.translate(0, 0, -thickness / 2); // center the extrusion on its local origin, matching TorusGeometry's centering
+  return mesh;
+}
+
+const outerRing = makeQR24Disc(0.55, 0.05, 0x4f8ff0);
+outerRing.rotation.x = Math.PI / 2; // ring sits flat around the vertical cable at rest
+outerGroup.add(outerRing);
+const outerYokeMat = new THREE.MeshStandardMaterial({ color: 0x4f8ff0, roughness: 0.45, metalness: 0.4 });
+loadYokePart('../cad/outer_yoke.stl', outerGroup, { axis1Vertical: true, rotateY180: true, rotateY90: true, rotateX90: true, rotateZ180: true }, outerYokeMat, outerRing);
+
+const innerGroup = new THREE.Group();
+outerGroup.add(innerGroup);
+
+const innerRing = makeQR24Disc(0.38, 0.045, 0xf0a24f);
+innerRing.rotation.y = Math.PI / 2;
+innerGroup.add(innerRing);
+const innerYokeMat = new THREE.MeshStandardMaterial({ color: 0xf0a24f, roughness: 0.45, metalness: 0.4 });
+// flip180Z turned OFF (2026-07-24): user asked to switch which male stub
+// mates into which female hole. Verified numerically against the exact CAD
+// coordinates before changing -- relative to the pivot, outer_yoke's female
+// holes sit at +-0.1524 and inner_yoke's male stubs at +-0.1956. With
+// flip180Z:true, stub_L (+0.1956) sat on the same side as hole_L (+0.1524);
+// with it off, stub_L lands at -0.1956, i.e. mating into hole_R instead --
+// exactly the requested swap. Checked that nothing else moves: the loaded
+// mesh's local X and Z bounding-box ranges are byte-identical either way
+// (Z still reaches -0.2731, matching CABLE_EXIT_OFFSET, so the hardcoded
+// cable/hub/dragHandle stay aligned with the real tube end); only Y shifts,
+// which is the swap itself.
+loadYokePart('../cad/inner_yoke.stl', innerGroup, { offset: INNER_YOKE_NATIVE_OFFSET, flip180Z: false, axis1Vertical: true, rotateY90: true, rotateX90: true }, innerYokeMat, innerRing);
+
+// Cable exit point (2026-07-24, updated same day for the rotateY90 whole-
+// assembly yaw above): the real inner_yoke tube's pivot connection sits at
+// innerGroup's local origin by construction (that's where axis-1 attaches),
+// and the tube extends from there out to a fixed offset from the mesh
+// bounding box -- that far end is where the cable actually exits in real
+// life, NOT the origin. This matters because innerGroup rotates about local
+// Y (vertical, per axis1Vertical): a cable hanging from the origin sits
+// exactly ON that rotation axis and wouldn't move at all when the X slider
+// changes (like twirling a pendulum string along its own length -- the
+// weight at the bottom never swings). Anchoring at the real tube-end offset
+// fixes this: that point is off the rotation axis, so it correctly sweeps as
+// X changes. Originally measured as local X=+0.273 (inner_yoke mesh bounding
+// box, before rotateY90 existed); rotateY90 (Ry(90): x'=z, z'=-x) applied to
+// that same point gives local (0, y, -0.273) -- moved from the X axis to the
+// Z axis, same offset magnitude, consistent with every other part getting
+// the identical rotation.
+// After rotateX90 the tube points straight DOWN rather than horizontally
+// away from the rig, so the exit offset moved from local -Z to local -Y
+// (confirmed against the loaded mesh's bbox: Y now reaches -0.2731, exactly
+// the value Z used to reach). The cable hangs from that exit point, so its
+// own length is added below it rather than measured from the pivot.
+const CABLE_EXIT_OFFSET = 0.273;
+const CABLE_LENGTH = 1.3;
+const cableMat = new THREE.MeshStandardMaterial({ color: 0xe6e8eb, roughness: 0.3, metalness: 0.1 });
+const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, CABLE_LENGTH, 12), cableMat);
+cable.position.set(0, -CABLE_EXIT_OFFSET - CABLE_LENGTH / 2, 0);
+innerGroup.add(cable);
+
+const hubMat = new THREE.MeshStandardMaterial({ color: 0x9aa4b1, roughness: 0.5, metalness: 0.5 });
+const hub = new THREE.Mesh(new THREE.SphereGeometry(0.08, 16, 16), hubMat);
+hub.position.set(0, -CABLE_EXIT_OFFSET, 0); // marks the real cable-exit point, no longer the (now off-axis) rotation origin
+innerGroup.add(hub);
+
+// Invisible grab handle at the cable's free end (the white cable is the only
+// piece that actually visibly swings with deflection). Sized larger than the
+// 0.03-radius cable itself so it's easy to grab with the mouse; opacity 0
+// keeps it invisible while still raycastable (visibility doesn't gate
+// THREE.Raycaster hits, only the material channel does).
+// NOTE: the drag-to-rotate inverse-kinematics math further down (search
+// CABLE_TIP_RADIUS) was derived assuming the cable hangs from the exact
+// pivot origin -- now that it hangs from an offset point, that math is only
+// an approximation (not re-derived here, out of scope for this pass; the
+// written requirements only call for slider + tension control, not drag).
+const CABLE_TIP_RADIUS = CABLE_LENGTH; // matches the cable length, tip is this far from its (now offset) start point
+const dragHandleMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 });
+const dragHandle = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 12), dragHandleMat);
+dragHandle.position.set(0, -CABLE_EXIT_OFFSET - CABLE_TIP_RADIUS, 0);
+innerGroup.add(dragHandle);
+
+// ---------- Reel barrel and cable laid on the ground ----------
+const BARREL_POS = new THREE.Vector3(0, 0.35, 1.05);
+const barrelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.55, 24);
+barrelGeo.rotateZ(Math.PI / 2); // bake the drum axis onto local X, so spin is a clean single-axis rotation
+const barrelMat = new THREE.MeshStandardMaterial({ color: 0x5a6473, roughness: 0.5, metalness: 0.5 });
+const barrel = new THREE.Mesh(barrelGeo, barrelMat);
+barrel.position.copy(BARREL_POS);
+scene.add(barrel);
+
+const spoolMat = new THREE.MeshStandardMaterial({ color: 0x3a4552, roughness: 0.6, metalness: 0.3 });
+[-0.3, 0.3].forEach(x => {
+  const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 24), spoolMat);
+  flange.rotation.z = Math.PI / 2;
+  flange.position.copy(BARREL_POS).setX(x);
+  scene.add(flange);
+});
+
+const groundCableMat = new THREE.MeshStandardMaterial({ color: 0xcfd4da, roughness: 0.4, metalness: 0.1 });
+const groundCableGeo = new THREE.BoxGeometry(1, 0.035, 0.07);
+const groundCable = new THREE.Mesh(groundCableGeo, groundCableMat);
+groundCable.position.copy(BARREL_POS).setY(0.02);
+scene.add(groundCable);
+
+// ---------- Reference axes (2026-07-24) ----------
+// Added because "left/right", "X-axis", "Y-axis", "forward/backward" were
+// being used to mean different things in conversation. These are WORLD axes
+// (standard color convention: X=red, Y=green, Z=blue), drawn at the gimbal
+// pivot, with text labels including the mapping to the deflection channel
+// names -- e.g. "Deflection X-axis" (the inner yoke's rotation) actually
+// spins about world Y (vertical), NOT world X; "Deflection Y-axis" (outer
+// yoke) spins about world Z. That mismatch between encoder-channel naming
+// and world-space axes is exactly the kind of thing worth having an
+// unambiguous, always-visible reference for.
+function makeTextSprite(text, color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(13,17,23,0.85)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  const texture = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
+  sprite.scale.set(0.5, 0.125, 1);
+  sprite.renderOrder = 999;
+  return sprite;
+}
+
+const AXES_ORIGIN = new THREE.Vector3(0, PIVOT_Y, 0);
+const AXES_LEN = 0.8;
+function makeAxisLine(dir, color) {
+  const geo = new THREE.BufferGeometry().setFromPoints([
+    AXES_ORIGIN.clone(),
+    AXES_ORIGIN.clone().add(dir.clone().multiplyScalar(AXES_LEN)),
+  ]);
+  return new THREE.Line(geo, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
+}
+
+// Axis LETTERS renamed 2026-07-24 to match the written requirements'
+// terminology, not standard 3D-graphics convention: the requirements define
+// "Y-axis" as the outer yoke's forward-backward/toward-rig motion, so the
+// toward/away-from-rig line (Three.js world Z under the hood) is labeled
+// "Y" here, and the vertical up/down line (Three.js world Y under the hood)
+// is labeled "Z". This is a display-only renaming -- none of the underlying
+// THREE.Vector3 directions, colors, or transform math changed, only which
+// letter is printed on which colored line, so the "Deflection Y-axis"
+// (outer yoke) note below now correctly says it rotates about "world Y"
+// instead of conflicting with a same-named-but-different world Y.
+const refAxesGroup = new THREE.Group();
+refAxesGroup.add(makeAxisLine(new THREE.Vector3(1, 0, 0), 0xff4444));  // world +X, red
+refAxesGroup.add(makeAxisLine(new THREE.Vector3(0, 1, 0), 0x44ff44));  // vertical, green -- labeled Z
+refAxesGroup.add(makeAxisLine(new THREE.Vector3(0, 0, 1), 0x4488ff));  // toward rig, blue -- labeled Y
+refAxesGroup.add(makeAxisLine(new THREE.Vector3(0, 0, -1), 0x225588)); // away from rig, dim blue -- labeled -Y
+
+const labelSpecs = [
+  ['+X (right, facing away from rig)', '#ff4444', new THREE.Vector3(1, 0, 0)],
+  ['-X (left)', '#ff8888', new THREE.Vector3(-1, 0, 0)],
+  ['+Z (up)', '#44ff44', new THREE.Vector3(0, 1, 0)],
+  ['+Y (toward rig)', '#4488ff', new THREE.Vector3(0, 0, 1)],
+  ['-Y (away from rig)', '#88bbff', new THREE.Vector3(0, 0, -1)],
+];
+labelSpecs.forEach(([text, color, dir]) => {
+  const sprite = makeTextSprite(text, color);
+  sprite.position.copy(AXES_ORIGIN).add(dir.clone().multiplyScalar(AXES_LEN + 0.15));
+  refAxesGroup.add(sprite);
+});
+
+// Deflection-channel-name reference, separate from the world-axis lines
+// above -- placed slightly offset so it doesn't overlap the +Z (up) label.
+const deflectionNote = makeTextSprite('Deflection "X-axis" = inner yoke = rotates about the +Y (toward/away rig) line', '#f0a24f');
+deflectionNote.position.set(0, PIVOT_Y + AXES_LEN + 0.4, 0);
+deflectionNote.scale.set(1.1, 0.22, 1);
+refAxesGroup.add(deflectionNote);
+const deflectionNote2 = makeTextSprite('Deflection "Y-axis" = outer yoke = rotates about world X', '#4f8ff0');
+deflectionNote2.position.set(0, PIVOT_Y + AXES_LEN + 0.65, 0);
+deflectionNote2.scale.set(1.1, 0.22, 1);
+refAxesGroup.add(deflectionNote2);
+
+scene.add(refAxesGroup);
+
+// ---------- Orbit camera ----------
+// Default view (2026-07-24): front-on, from roughly the rig's position
+// looking outward toward the gimbal -- azimuth=0 puts the camera along +Z
+// from the target (rig is at world Z=2.1; gimbal pivot is at Z=0), looking
+// toward -Z. Radius/target rescaled for the real CAD geometry, which is far
+// smaller (~0.3-0.5m parts) than the old placeholder torus scene this was
+// originally tuned for.
+let azimuth = 0, elevation = 0.2, radius = 2.5;
+const target = new THREE.Vector3(0, 0.5, 0);
+function updateCamera() {
+  const el = Math.max(0.05, Math.min(1.5, elevation));
+  camera.position.set(
+    target.x + radius * Math.cos(el) * Math.sin(azimuth),
+    target.y + radius * Math.sin(el),
+    target.z + radius * Math.cos(el) * Math.cos(azimuth)
+  );
+  camera.lookAt(target);
+}
+updateCamera();
+let dragging = false, lastX = 0, lastY = 0;
+
+// ---------- Drag the white cable tip to set both axes directly ----------
+const raycaster = new THREE.Raycaster();
+const pointerNDC = new THREE.Vector2();
+const PIVOT_WORLD = new THREE.Vector3(0, PIVOT_Y, 0); // outerGroup only rotates, never translates, so this is constant
+let draggingHub = false;
+
+function setPointerNDC(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointerNDC.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointerNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function hitsDragHandle(e) {
+  setPointerNDC(e);
+  raycaster.setFromCamera(pointerNDC, camera);
+  return raycaster.intersectObject(dragHandle, false).length > 0;
+}
+
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (hitsDragHandle(e)) {
+    draggingHub = true;
+    if (tensionDrive.checked) { tensionDrive.checked = false; applyTensionDrive(); }
+    wrapEl.style.cursor = 'grabbing';
+    return;
+  }
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener('pointerup', () => {
+  dragging = false;
+  draggingHub = false;
+  wrapEl.style.cursor = 'grab';
+});
+window.addEventListener('pointermove', e => {
+  if (draggingHub) {
+    setPointerNDC(e);
+    raycaster.setFromCamera(pointerNDC, camera);
+    const sphere = new THREE.Sphere(PIVOT_WORLD, CABLE_TIP_RADIUS);
+    const hit = new THREE.Vector3();
+    if (raycaster.ray.intersectSphere(sphere, hit)) {
+      const p = hit.sub(PIVOT_WORLD);
+      // Inverse of: p = Rz(d0) * Rx(d1) * (0, -CABLE_TIP_RADIUS, 0)
+      // => px = R*sin(d0), py = -R*cos(d0)  (R = CABLE_TIP_RADIUS*cos(d1)), pz = -R'*sin(d1)
+      const d1rad = Math.asin(THREE.MathUtils.clamp(-p.z / CABLE_TIP_RADIUS, -1, 1));
+      const d0rad = Math.atan2(p.x, -p.y);
+      let d0deg = THREE.MathUtils.radToDeg(d0rad);
+      let d1deg = THREE.MathUtils.radToDeg(d1rad);
+      d0deg = Math.max(parseFloat(a0Deg.min), Math.min(parseFloat(a0Deg.max), d0deg));
+      d1deg = Math.max(parseFloat(a1Deg.min), Math.min(parseFloat(a1Deg.max), d1deg));
+      a0Deg.value = Math.round(d0deg);
+      a1Deg.value = Math.round(d1deg);
+      render();
+    }
+    return;
+  }
+  if (dragging) {
+    azimuth -= (e.clientX - lastX) * 0.006;
+    elevation += (e.clientY - lastY) * 0.006;
+    lastX = e.clientX; lastY = e.clientY;
+    updateCamera(); draw();
+    return;
+  }
+  if (hitsDragHandle(e)) { wrapEl.style.cursor = 'grab'; } else { wrapEl.style.cursor = 'default'; }
+});
+renderer.domElement.addEventListener('wheel', e => {
+  e.preventDefault();
+  radius = Math.max(1.6, Math.min(8, radius + e.deltaY * 0.003));
+  updateCamera(); draw();
+}, { passive: false });
+window.addEventListener('resize', () => {
+  camera.aspect = wrapEl.clientWidth / wrapEl.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(wrapEl.clientWidth, wrapEl.clientHeight);
+  draw();
+});
+function draw() { renderer.render(scene, camera); }
+
+// ---------- Controls ----------
+const a0Deg = document.getElementById('a0Deg'), a1Deg = document.getElementById('a1Deg');
+const a0Val = document.getElementById('a0Val'), a1Val = document.getElementById('a1Val');
+const a0Low = document.getElementById('a0Low'), a0High = document.getElementById('a0High'), a0Zero = document.getElementById('a0Zero');
+const a1Low = document.getElementById('a1Low'), a1High = document.getElementById('a1High'), a1Zero = document.getElementById('a1Zero');
+const outputRows = document.getElementById('outputRows');
+const fullScale = document.getElementById('fullScale'), fsVal = document.getElementById('fsVal');
+const contribXInput = document.getElementById('contribX'), contribYInput = document.getElementById('contribY');
+const discardInput = document.getElementById('discard');
+const headroomEl = document.getElementById('headroom');
+const a0LowDeg = document.getElementById('a0LowDeg'), a0HighDeg = document.getElementById('a0HighDeg');
+const a1LowDeg = document.getElementById('a1LowDeg'), a1HighDeg = document.getElementById('a1HighDeg');
+
+document.getElementById('fwBtn').addEventListener('click', () => {
+  fullScale.value = 180; contribXInput.value = 0.12; contribYInput.value = 0.12; discardInput.value = 0.10;
+  render();
+});
+
+// Reports, for the CURRENT tuning, the smallest deflection angle on each axis
+// that actually produces a reel command. Two gates have to clear: the vector
+// must leave the deadzone, and contribution (vector/1000 * factor) must exceed
+// the discard threshold. Solved directly rather than swept, so it stays exact.
+function updateHeadroom() {
+  const fs = parseFloat(fullScale.value);
+  const disc = parseFloat(discardInput.value);
+  const parts = [];
+  [['X', parseFloat(contribXInput.value), parseFloat(a0High.value), 45],
+   ['Y', parseFloat(contribYInput.value), parseFloat(a1High.value), fs]].forEach(([name, factor, high, travel]) => {
+    if (!(factor > 0)) { parts.push(`<span style="color:var(--warn)">${name}: factor 0, never responds</span>`); return; }
+    const vectorNeeded = disc / factor * 1000;
+    if (vectorNeeded > 1000) {
+      parts.push(`<span style="color:var(--warn)">${name}: impossible &mdash; needs vector ${Math.round(vectorNeeded)}, max is 1000</span>`);
+      return;
+    }
+    // invert lineSegmentScale(p, high, 1000, 0, 1000) = vectorNeeded
+    const permilleNeeded = high + (vectorNeeded / 1000) * (1000 - high);
+    const degNeeded = permilleToDeg(permilleNeeded, fs);
+    const reachable = degNeeded <= travel + 0.001;
+    const pct = Math.max(0, Math.min(100, 100 * (1 - degNeeded / travel)));
+    parts.push(reachable
+      ? `<span style="color:var(--good)">${name}: responds from ${degNeeded.toFixed(1)}&deg;</span> <span style="color:var(--text-dim)">(top ${pct.toFixed(0)}% of its ${travel}&deg; travel)</span>`
+      : `<span style="color:var(--warn)">${name}: needs ${degNeeded.toFixed(1)}&deg;, beyond its ${travel}&deg; limit &mdash; never responds</span>`);
+  });
+  headroomEl.innerHTML = parts.join('<br>');
+}
+
+document.getElementById('protoBtn').addEventListener('click', () => {
+  a1Low.value = -100; a1High.value = 600;
+  render();
+});
+
+const tension = document.getElementById('tension');
+const tensionVal = document.getElementById('tensionVal');
+const tensionDrive = document.getElementById('tensionDrive');
+
+function applyTensionDrive() {
+  const on = tensionDrive.checked;
+  a1Deg.disabled = on;
+  if (on) {
+    const t = parseFloat(tension.value);
+    tensionVal.textContent = t.toFixed(0) + '%';
+    a1Deg.value = (t / 100 * 90).toFixed(0);
+  }
+}
+tension.addEventListener('input', () => { applyTensionDrive(); render(); });
+tensionDrive.addEventListener('change', () => { applyTensionDrive(); render(); });
+applyTensionDrive();
+
+function render() {
+  const d0 = parseFloat(a0Deg.value), d1 = parseFloat(a1Deg.value);
+  a0Val.textContent = d0.toFixed(0) + '\u00b0';
+  a1Val.textContent = d1.toFixed(0) + '\u00b0';
+
+  const fs = parseFloat(fullScale.value);
+  fsVal.textContent = fs + '°';
+  const r0 = computeAxis(d0, parseFloat(a0Zero.value), parseFloat(a0Low.value), parseFloat(a0High.value), fs);
+  const r1 = computeAxis(d1, parseFloat(a1Zero.value), parseFloat(a1Low.value), parseFloat(a1High.value), fs);
+
+  // Label every deadzone field with what it means in degrees at this scale.
+  const dz = (el, v) => { el.textContent = permilleToDeg(parseFloat(v), fs).toFixed(1) + '°'; };
+  dz(a0LowDeg, a0Low.value); dz(a0HighDeg, a0High.value);
+  dz(a1LowDeg, a1Low.value); dz(a1HighDeg, a1High.value);
+  updateHeadroom();
+
+  const rowHtml = (label, color, r) => `
+    <tr>
+      <td style="color:${color}">${label}</td>
+      <td class="mono">${r.degOut.toFixed(1)}&deg;</td>
+      <td class="mono">${r.rawCounts}</td>
+      <td class="mono">${r.raw01perc}</td>
+      <td><span class="tag ${r.inDeadzone ? 'in' : 'out'}">${r.inDeadzone ? 'in deadzone' : 'active'}</span></td>
+      <td class="mono">${r.vector}</td>
+    </tr>`;
+  outputRows.innerHTML = rowHtml('Axis 0, X', '#4f8ff0', r0) + rowHtml('Axis 1, Y', '#f0a24f', r1);
+
+  // Slider-to-group assignment, per the written requirements doc (2026-07-24):
+  // "the inner yoke represents the x-axis of the deflection" / "the outer
+  // yoke represents the y-axis of the deflection" -- so Axis 0 (d0, X)
+  // drives innerGroup (outer_yoke<->inner_yoke rotation, vertical axis via
+  // axis1Vertical), and Axis 1 (d1, Y) drives outerGroup (frame<->outer_yoke
+  // rotation). This is the opposite of an earlier iteration that was
+  // reverted at the time -- re-confirmed explicitly against the written
+  // requirement this time, not just inferred.
+  // outerGroup's axis changed from world Z to world X the same day
+  // (rotateY90, see transformYokeGeometry above): the frame's pivot line
+  // itself got yawed 90deg to satisfy "legs symmetric with the X axis", so
+  // the axis outerGroup spins about has to follow it exactly (Ry(90) applied
+  // to the old (0,0,1) axis vector gives (1,0,0)) or the connection breaks.
+  // innerGroup's axis moved local Y -> local Z when rotateX90 swung the outer
+  // ring's plane onto the Y-axis (see transformYokeGeometry): axis-1 went
+  // vertical -> world Z, so the group that rotates about it has to follow.
+  // outerGroup stays on world X -- rotateX90 is a rotation ABOUT that axis,
+  // which leaves it fixed.
+  innerGroup.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), toRad(d0));
+  outerGroup.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), toRad(d1));
+
+  draw();
+}
+
+// NOTE (bug fix, 2026-07-24): these must call render() indirectly, NOT pass
+// `render` itself. Further down, `render` is REASSIGNED to a wrapper that
+// also refreshes currentVX/currentVY (the values the reel-trim loop reads).
+// Passing the function reference here captures the ORIGINAL render at bind
+// time, so slider moves only ever called the unwrapped version -- currentVX
+// and currentVY stayed 0 forever and the entire reel trim / PWM section was
+// dead, no matter how far the sliders moved. Found by driving Axis 1 to 180
+// deg (published vector = 1000, its maximum) and watching `contribution`
+// sit at 0.000. An arrow wrapper defers the lookup to call time, so it picks
+// up whichever `render` is current.
+[a0Deg, a1Deg, a0Low, a0High, a0Zero, a1Low, a1High, a1Zero,
+ fullScale, contribXInput, contribYInput, discardInput].forEach(el => el.addEventListener('input', () => render()));
+render();
+
+// ---------- Reel trim / PWM output, verified logic from control.cpp ----------
+const CONTRIB_X = 0.12, CONTRIB_Y = 0.12;
+const EMA_GAIN = 0.04;
+const RAMP_NORMAL = 0.02, RAMP_REVERSING = 0.03, RAMP_DECEL = 0.04;
+const DISCARD = 0.10;
+// Deflection_Trim_PWMPeriod_ms from cablereel_signals.xml (default 1000ms).
+// The reel's two digital outputs (DO_Motor_Unwind / DO_Motor_Wind) really are
+// pulsed at this period with the computed duty cycle -- that IS how reel speed
+// is modulated, since the motor has no analog speed input. So the indicator
+// below flashing at this rate is showing the actual output waveform, not a
+// decorative animation: on-time within each period == duty cycle.
+const PWM_PERIOD_MS = 1000;
+
+// ---------- Drum inertia, ported from scripts/reel_inertia_model.py (2026-07-27) ----------
+// Closed-form continuous-annulus approximation only (not the discrete
+// layer-by-layer method) -- the Python script cross-checked the two agree to
+// <0.1% at this drum's real geometry, and the closed form needs no loop.
+// Constants below are computed values FROM that script (CORE_RADIUS_M,
+// DRUM_WIDTH_M, FLANGE_RADIUS_M, I_FIXED_KGM2, L_max for 36-517-002), not
+// re-derived independently -- if the drum geometry or cable spec changes,
+// re-run the Python script and update these, don't hand-edit them apart.
+const DRUM_CORE_RADIUS_M = 0.7874;      // 62in core diameter / 2, real Sandvik spec
+const DRUM_WIDTH_M = 1.83515;           // 72.25in, real Sandvik spec
+const DRUM_FLANGE_RADIUS_M = 0.9144;    // 72in flange diameter / 2, real Sandvik spec
+const DRUM_I_FIXED_KGM2 = 1266.37;      // empty-drum inertia (core+flanges), steel wall ESTIMATED
+const CABLE_OD_M = 0.053848;            // Nexans 36-517-002, real datasheet spec
+const CABLE_KG_PER_M = 4.2115;          // Nexans 36-517-002, real datasheet spec
+const DRUM_PACKING_EFF = Math.PI / 4;   // square-packing assumption, matches the Python model
+const DRUM_L_MAX_M = 359.4;             // max cable length this drum holds, from the Python model
+
+// ---------- Wrap-layer model: turns -> layer -> spooled length (2026-08-04) ----------
+// Added per the LLM council review on adding a drum encoder for a cable-
+// capacity tramming interlock: turns-of-drum is NOT a linear proxy for
+// length -- level winding means turns-per-layer stays constant but each
+// layer's radius, and therefore its length-per-turn, grows outward as the
+// wind builds up. The council flagged naive "turns * circumference" math as
+// the exact failure mode that silently drifts worst near empty, right where
+// an interlock threshold lives. This is the discrete layer-by-layer method
+// (same approach reel_inertia_model.py cross-checked against its closed-form
+// continuous-annulus approximation, <0.1% apart), applied to length instead
+// of inertia.
+const WRAPS_PER_LAYER = Math.floor(DRUM_WIDTH_M / CABLE_OD_M); // ~34, width / cable OD
+
+// Radius of the cable's center on a given (0-indexed) layer -- the "+0.5"
+// places it at the center of that layer's cable cross-section, not its
+// inner or outer edge. Factored out of lengthFromTurns because the inertia
+// sim below (2026-08-06) needs the CURRENT radius directly, to convert
+// cable tension (a force) into a load torque -- same formula, not a
+// reimplementation of it.
+function layerRadius(layerIndex) {
+  return DRUM_CORE_RADIUS_M + CABLE_OD_M * (layerIndex + 0.5);
+}
+function radiusAtTurns(turns) {
+  return layerRadius(Math.floor(Math.max(0, turns) / WRAPS_PER_LAYER));
+}
+
+// turns -> spooled length, fractional turns supported so the live sim can
+// drive it continuously frame to frame rather than snapping layer to layer.
+function lengthFromTurns(turns) {
+  turns = Math.max(0, turns);
+  const wholeLayers = Math.floor(turns / WRAPS_PER_LAYER);
+  let length = 0;
+  for (let layer = 0; layer < wholeLayers; layer++) {
+    length += WRAPS_PER_LAYER * 2 * Math.PI * layerRadius(layer);
+  }
+  const partialTurns = turns - wholeLayers * WRAPS_PER_LAYER;
+  length += partialTurns * 2 * Math.PI * layerRadius(wholeLayers);
+  return length;
+}
+
+// Inverse via bisection -- lengthFromTurns is monotonic increasing (piecewise
+// smooth with kinks at layer boundaries, which bisection doesn't care about).
+function turnsForLength(targetLength) {
+  let lo = 0, hi = 10000;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (lengthFromTurns(mid) < targetLength) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+// The council's "first step" recommendation: confirm the model reconciles to
+// the drum's known real capacity before trusting it for anything downstream.
+// It does, to within 0.1m -- TOTAL_TURNS_CAPACITY works out to just under 2
+// full layers (~68 turns), which also matches the flange/core radius gap
+// (0.127m) divided by cable OD (0.054m) allowing only ~2.4 layers. That's the
+// Expansionist advisor's back-of-envelope estimate during the council
+// session, not the Contrarian's "roughly 8-9 layers" guess -- worth having
+// the exact model settle it rather than trusting either guess.
+const TOTAL_TURNS_CAPACITY = turnsForLength(DRUM_L_MAX_M);
+
+function drumInertiaOfLength(L) {
+  const area = Math.PI * (CABLE_OD_M / 2) ** 2;
+  const rOuterSq = DRUM_CORE_RADIUS_M ** 2
+    + (L * area) / (DRUM_PACKING_EFF * Math.PI * DRUM_WIDTH_M);
+  const mCable = L * CABLE_KG_PER_M;
+  const iWound = 0.5 * mCable * (DRUM_CORE_RADIUS_M ** 2 + rOuterSq);
+  return DRUM_I_FIXED_KGM2 + iWound;
+}
+
+const spoolLen = document.getElementById('spoolLen');
+const spoolLenVal = document.getElementById('spoolLenVal');
+spoolLen.max = Math.floor(DRUM_L_MAX_M);
+const motorStallTorque = document.getElementById('motorStallTorque');
+const gearRatio = document.getElementById('gearRatio');
+const driveEff = document.getElementById('driveEff');
+const torqueCheckEl = document.getElementById('torqueCheck');
+const dutyOverride = document.getElementById('dutyOverride');
+const dutyOverrideSlider = document.getElementById('dutyOverrideSlider');
+const dutyOverrideVal = document.getElementById('dutyOverrideVal');
+const hydraulicBtn = document.getElementById('hydraulicBtn');
+
+function applyDutyOverride() {
+  dutyOverrideSlider.disabled = !dutyOverride.checked;
+}
+dutyOverride.addEventListener('change', () => { applyDutyOverride(); updateTorqueCheck(lastDutyPercent); });
+dutyOverrideSlider.addEventListener('input', () => {
+  dutyOverrideVal.textContent = dutyOverrideSlider.value + '%';
+  updateTorqueCheck(lastDutyPercent);
+});
+applyDutyOverride();
+
+// 5 HP hydraulic motor, illustrative (2026-07-27): no real hydraulic motor
+// spec exists either. Torque = power / omega needs a speed to convert
+// power into torque, so this ASSUMES a 500 RPM rated speed -- a plausible
+// mid-range figure for a mobile-equipment gerotor/orbital motor, not a
+// datasheet number. 5 HP = 5 * 745.7 W = 3728.5 W; at 500 RPM
+// (omega = 500 * 2*PI/60 = 52.36 rad/s), torque = 3728.5/52.36 = ~71.2 Nm.
+// Gear ratio and efficiency are set for a close-coupled hydraulic drive
+// (hydraulic motors are often already low-speed/high-torque, unlike an
+// electric motor needing a large reduction) -- also illustrative.
+const HYDRAULIC_5HP_TORQUE_NM = (5 * 745.7) / (500 * 2 * Math.PI / 60);
+hydraulicBtn.addEventListener('click', () => {
+  motorStallTorque.value = HYDRAULIC_5HP_TORQUE_NM.toFixed(1);
+  gearRatio.value = 4;
+  driveEff.value = 0.90;
+  updateTorqueCheck(lastDutyPercent);
+});
+
+// Real Sandvik reel motor, theoretical column (2026-08-06, from
+// hydraulic_calcs(Sheet1).csv -- a real vendor calc sheet with two columns,
+// "Theoretical Motor Perf." and "Eaton Motor Spec Perf.". User chose the
+// theoretical column as the sim default: it's a pure physics calc (pressure
+// * displacement / 2pi for torque, flow / displacement for speed) rather
+// than illustrative guesswork, and it's independently checkable -- Eaton's
+// real vendor spec runs higher (520.0 Nm motor torque / 15.0 RPM motor
+// speed / 756.4 Nm reel torque) since a catalog rating reflects the actual
+// motor's real losses/derating that an ideal calc doesn't capture; the
+// theoretical numbers are the more conservative (lower-torque) choice.
+//
+// Peak motor torque = peak circuit pressure (1000 PSI = 6,894,757 Pa) *
+// motor displacement (393.9 cc = 393.9e-6 m^3) / (2*pi) = 432.3 Nm, matches
+// the sheet's 432.4 Nm to within rounding.
+const HYD_SANDVIK_MOTOR_TORQUE_NM = 432.4;
+// Sprocket A (motor side, 22 teeth) : Sprocket B (reel side, 32 teeth) --
+// reel turns slower than the motor and gets more torque. The sheet reports
+// the SPEED ratio (reel/motor = 22/32 = 0.6875); this sim's torqueAvail
+// model wants the TORQUE multiplier (stall * ratio * eff), which is the
+// reciprocal, teeth_B/teeth_A. This is a MASSIVE correction from the old
+// 30 (N:1) illustrative placeholder -- the real chain/sprocket reduction on
+// this rig is only about 1.45:1, not 30:1.
+const HYD_SANDVIK_GEAR_RATIO = 32 / 22;
+// The sheet's own peak reel torque (628.9 Nm) equals peak motor torque *
+// gear ratio EXACTLY (432.4 * 32/22 = 628.9), with no separate loss factor
+// applied -- confirms the theoretical column assumes an ideal, lossless
+// chain/sprocket transfer. Setting efficiency to 1.0 here reproduces the
+// sheet's own reel-torque number exactly, rather than silently adding an
+// efficiency assumption the source data doesn't contain.
+const HYD_SANDVIK_DRIVE_EFF = 1.0;
+// Informational only (not fed into the Nm/torqueAvail calc, which is a
+// stall-torque model independent of speed) -- peak motor/reel RPM from the
+// sheet, shown so "100% duty" has a concrete top-speed meaning attached.
+const HYD_SANDVIK_PEAK_MOTOR_RPM = 20.2;
+const HYD_SANDVIK_PEAK_REEL_RPM = 13.9;
+// Cross-check, NOT wired into the drum/capacity model: the calc sheet's own
+// "radius of first wrap" (31.1in) independently lands within 0.1in of this
+// sim's DRUM_CORE_RADIUS_M (0.7874m = 31.0in) -- good agreement. Its cable
+// diameter (2.2in) does NOT agree as closely with the drum/wrap-layer/
+// capacity-interlock model's cable spec (CABLE_OD_M = 0.053848m = 2.12in,
+// Nexans 36-517-002) -- a real ~4% discrepancy, not rounding noise. Per user
+// direction (2026-08-06) this is left UNRECONCILED: the drum/capacity model
+// keeps using the Nexans 2.12in spec, this torque-check panel's numbers
+// don't depend on cable diameter at all, and the mismatch is flagged here
+// as an open item for whoever confirms which cable spec is authoritative.
+const sandvikHydraulicBtn = document.getElementById('sandvikHydraulicBtn');
+sandvikHydraulicBtn.addEventListener('click', () => {
+  motorStallTorque.value = HYD_SANDVIK_MOTOR_TORQUE_NM.toFixed(1);
+  gearRatio.value = HYD_SANDVIK_GEAR_RATIO.toFixed(4);
+  driveEff.value = HYD_SANDVIK_DRIVE_EFF.toFixed(2);
+  updateTorqueCheck(lastDutyPercent);
+});
+
+// Stall-torque model: duty is assumed to map linearly to average torque
+// delivered at the drum shaft at zero/low speed. For the default electric
+// framing that means no back-EMF correction (fine for a "can it even start
+// moving" check, not a running-speed model) -- for the hydraulic preset,
+// back-EMF doesn't apply at all (hydraulic torque stays roughly flat with
+// speed instead of tapering), but duty-as-average-torque is still only an
+// approximation, since how the real digital outputs actually drive the
+// hydraulics (time-proportioned valve or otherwise) isn't confirmed.
+//
+// dutyPercent here is the LIVE value from the reel-trim loop; effectiveDuty()
+// substitutes the manual override instead when that toggle is on, so this
+// box can be asked "what would 50% duty do" independent of what the sliders
+// currently produce.
+function effectiveDuty(liveDutyPercent) {
+  return dutyOverride.checked ? parseFloat(dutyOverrideSlider.value) : liveDutyPercent;
+}
+
+function updateTorqueCheck(liveDutyPercent) {
+  const dutyPercent = effectiveDuty(liveDutyPercent);
+  const L = parseFloat(spoolLen.value);
+  spoolLenVal.textContent = L.toFixed(0) + ' m';
+  const I = drumInertiaOfLength(L);
+
+  const stall = parseFloat(motorStallTorque.value) || 0;
+  const ratio = parseFloat(gearRatio.value) || 1;
+  const eff = parseFloat(driveEff.value) || 0;
+  const torqueAvail = (dutyPercent / 100) * stall * ratio * eff;
+
+  const alpha = I > 0 ? torqueAvail / I : 0; // rad/s^2
+  const rpmPerSec = alpha * 60 / (2 * Math.PI);
+
+  const placeholderWarning = (stall === 50 && ratio === 30 && eff === 0.85)
+    ? '<span style="color:var(--warn)">using the default placeholder motor spec &mdash; enter real values above, or load the Sandvik reel motor preset</span><br>'
+    : '';
+  // Loose float-compare tolerance rather than exact equality, since the
+  // preset button writes rounded/toFixed display strings back through the
+  // same parseFloat() path as manual typing.
+  const isSandvikPreset = Math.abs(stall - HYD_SANDVIK_MOTOR_TORQUE_NM) < 0.05
+    && Math.abs(ratio - HYD_SANDVIK_GEAR_RATIO) < 0.001
+    && Math.abs(eff - HYD_SANDVIK_DRIVE_EFF) < 0.005;
+  const sandvikNote = isSandvikPreset
+    ? `<span style="color:var(--good)">Sandvik reel motor (theoretical calc) loaded &mdash; peak motor speed ${HYD_SANDVIK_PEAK_MOTOR_RPM} RPM, peak reel speed ${HYD_SANDVIK_PEAK_REEL_RPM} RPM at 100% duty</span><br>`
+    : '';
+  const dutyLabel = dutyOverride.checked ? `test duty ${dutyPercent.toFixed(0)}%` : `current duty (${dutyPercent.toFixed(0)}%)`;
+  torqueCheckEl.innerHTML = placeholderWarning + sandvikNote +
+    `I(L) at this spool length: <b>${I.toFixed(1)} kg&middot;m&sup2;</b>` +
+    ` (${(I / DRUM_I_FIXED_KGM2).toFixed(2)}&times; the empty-drum value)<br>` +
+    `Torque available at ${dutyLabel}: <b>${torqueAvail.toFixed(2)} Nm</b><br>` +
+    `Resulting angular acceleration: <b>${alpha.toFixed(4)} rad/s&sup2;</b> (${rpmPerSec.toFixed(3)} RPM per second)` +
+    (torqueAvail <= 0 ? '<br><span style="color:var(--text-dim)">zero torque available at zero duty &mdash; expected</span>' : '');
+}
+let lastDutyPercent = 0; // set each frame by stepReelTrim below; read here so
+                          // editing a torque-check input doesn't have to wait
+                          // for the next animation frame to reflect live duty
+[spoolLen, motorStallTorque, gearRatio, driveEff].forEach(el =>
+  el.addEventListener('input', () => updateTorqueCheck(lastDutyPercent)));
+updateTorqueCheck(0); // initial paint, before the rAF loop below has run once
+
+let currentVX = 0, currentVY = 0;
+let rampedContribution = 0;
+let controllerValue = 0;
+
+const rtContribution = document.getElementById('rtContribution');
+const rtRamped = document.getElementById('rtRamped');
+const rtController = document.getElementById('rtController');
+const rtDuty = document.getElementById('rtDuty');
+const ledUnwind = document.getElementById('ledUnwind');
+const ledWind = document.getElementById('ledWind');
+const rtCommand = document.getElementById('rtCommand');
+const reelState = document.getElementById('reelState');
+const reelStateText = document.getElementById('reelStateText');
+const reelStateSub = document.getElementById('reelStateSub');
+const payoutValEl = document.getElementById('payoutVal');
+const maxPayoutInput = document.getElementById('maxPayout');
+
+// ---------- Capacity interlock DOM + state (2026-08-04) ----------
+const turnsValEl = document.getElementById('turnsVal');
+const layerValEl = document.getElementById('layerVal');
+const spooledLenValEl = document.getElementById('spooledLenVal');
+const capacityBarEl = document.getElementById('capacityBar');
+const warnPctInput = document.getElementById('warnPct');
+const blockPctInput = document.getElementById('blockPct');
+const rearmMarginInput = document.getElementById('rearmMargin');
+const rearmMarginLabelEl = document.getElementById('rearmMarginLabel');
+const encoderFaultInput = document.getElementById('encoderFault');
+const calibrateBtn = document.getElementById('calibrateBtn');
+const trammingState = document.getElementById('trammingState');
+const trammingStateText = document.getElementById('trammingStateText');
+const trammingStateSub = document.getElementById('trammingStateSub');
+const cableTensionLbfInput = document.getElementById('cableTensionLbf');
+const maxDrumRpmInput = document.getElementById('maxDrumRpm');
+const drumRpmValEl = document.getElementById('drumRpmVal');
+const drumInertiaValEl = document.getElementById('drumInertiaVal');
+
+document.getElementById('wrapsPerLayerNote').textContent = WRAPS_PER_LAYER;
+document.getElementById('totalTurnsNote').textContent = TOTAL_TURNS_CAPACITY.toFixed(1);
+document.getElementById('totalLayersNote').textContent = Math.ceil(TOTAL_TURNS_CAPACITY / WRAPS_PER_LAYER);
+document.getElementById('reconciledLenNote').textContent = lengthFromTurns(TOTAL_TURNS_CAPACITY).toFixed(1);
+
+let turnsRemaining = TOTAL_TURNS_CAPACITY; // start fully spooled: docked at the station, nothing paid out
+let trammingBlocked = false; // sticky, so the rearm margin actually creates hysteresis
+
+calibrateBtn.addEventListener('click', () => {
+  turnsRemaining = TOTAL_TURNS_CAPACITY;
+  trammingBlocked = false;
+});
+function updateRearmLabel() {
+  const block = parseFloat(blockPctInput.value) || 0;
+  const margin = parseFloat(rearmMarginInput.value) || 0;
+  rearmMarginLabelEl.textContent = `(re-allows above ${(block + margin).toFixed(1)}%)`;
+}
+[blockPctInput, rearmMarginInput].forEach(el => el.addEventListener('input', updateRearmLabel));
+updateRearmLabel();
+
+// ---------- Drum inertia dynamics state (2026-08-06) ----------
+// drumOmega: signed angular velocity, rad/s. Positive = winding (turns
+// increasing, REEL IN), negative = unwinding (turns decreasing, UNREEL) --
+// matches turnsRemaining's own sign convention (increases on REEL IN).
+let drumOmega = 0;
+let lastPhysicsTime = performance.now();
+const LBF_TO_N = 4.4482216;
+
+const origRender = render;
+render = function () {
+  origRender();
+  currentVX = parseInt(document.querySelectorAll('#outputRows td.mono')[3].textContent, 10) || 0;
+  currentVY = parseInt(document.querySelectorAll('#outputRows td.mono')[7].textContent, 10) || 0;
+};
+render();
+
+function stepReelTrim() {
+  // Read live from the tuning panel rather than the CONTRIB_X/CONTRIB_Y/DISCARD
+  // constants, which now serve only as the documented firmware defaults.
+  const cx = parseFloat(contribXInput.value), cy = parseFloat(contribYInput.value);
+  const discardNow = parseFloat(discardInput.value);
+  const xContribution = currentVX / 1000.0;
+  const yContribution = currentVY / 1000.0;
+  const contribution = Math.abs(xContribution) * (isNaN(cx) ? CONTRIB_X : cx)
+    + yContribution * (isNaN(cy) ? CONTRIB_Y : cy);
+
+  rampedContribution += (contribution - rampedContribution) * EMA_GAIN;
+
+  const compositeTarget = 0.0 + rampedContribution;
+  const difference = compositeTarget - controllerValue;
+
+  const deceleratingIntoReverse = (controllerValue >= 0) && (compositeTarget < 0);
+  const reversing = (controllerValue < 0) && (compositeTarget > 0);
+  let gain = RAMP_NORMAL;
+  if (deceleratingIntoReverse) gain = RAMP_DECEL;
+  else if (reversing) gain = RAMP_REVERSING;
+
+  controllerValue += difference * gain;
+
+  let outValue = controllerValue;
+  if (Math.abs(outValue) < (isNaN(discardNow) ? DISCARD : discardNow)) outValue = 0;
+
+  let dutyPercent = Math.abs(outValue) * 100;
+  if (dutyPercent > 100) dutyPercent = 100;
+  const direction = outValue > 0 ? 1 : (outValue < 0 ? -1 : 0);
+  const pwmOn = dutyPercent > 0;
+  const unwindOut = pwmOn && direction >= 0;
+  const windOut = pwmOn && direction < 0;
+
+  rtContribution.textContent = contribution.toFixed(3);
+  rtRamped.textContent = rampedContribution.toFixed(3);
+  rtController.textContent = controllerValue.toFixed(3);
+  rtDuty.textContent = dutyPercent.toFixed(0) + '%';
+  lastDutyPercent = dutyPercent;
+  updateTorqueCheck(dutyPercent);
+
+  // Three-state reel command, mirroring the firmware's two real digital
+  // outputs (DO_Motor_Unwind / DO_Motor_Wind in cablereel_signals.xml).
+  // HOLD is not its own signal -- it's the implicit state when BOTH outputs
+  // are low, which is exactly how the hardware behaves, so it's derived here
+  // rather than invented.
+  const command = unwindOut ? 'UNREEL' : (windOut ? 'REEL IN' : 'HOLD');
+
+  // Within each PWM period the output is high for dutyPercent of the time.
+  // Driving the indicator off the same waveform means a low duty cycle
+  // visibly blinks slowly/briefly and 100% duty sits solid on -- the flash
+  // rate carries real information instead of being cosmetic.
+  const pwmPhase = (performance.now() % PWM_PERIOD_MS) / PWM_PERIOD_MS;
+  const pwmHigh = pwmOn && pwmPhase < (dutyPercent / 100);
+
+  const COLORS = { 'UNREEL': '#4fbf7a', 'REEL IN': '#e2574c', 'HOLD': '#9aa4b1' };
+  const color = COLORS[command];
+  const lit = command === 'HOLD' ? true : pwmHigh; // HOLD is steady, driven states pulse
+
+  reelStateText.textContent = command;
+  reelStateText.style.color = lit ? color : '#3a4552';
+  reelState.style.borderColor = lit ? color : 'var(--border)';
+  reelState.style.background = lit && command !== 'HOLD' ? `${color}22` : 'transparent';
+  reelStateSub.textContent = command === 'HOLD'
+    ? 'both outputs low, reel stationary'
+    : `${dutyPercent.toFixed(0)}% duty, pulsing every ${PWM_PERIOD_MS} ms`;
+  rtCommand.textContent = command;
+
+  const unwindHigh = unwindOut && pwmHigh;
+  const windHigh = windOut && pwmHigh;
+  ledUnwind.style.background = unwindHigh ? '#4fbf7a' : '#2a323d';
+  ledUnwind.style.boxShadow = unwindHigh ? '0 0 10px #4fbf7a' : 'none';
+  ledWind.style.background = windHigh ? '#e2574c' : '#2a323d';
+  ledWind.style.boxShadow = windHigh ? '0 0 10px #e2574c' : 'none';
+
+  // ---------- Drum inertia dynamics (2026-08-06) ----------
+  // Replaces the old canned "spin proportional to duty" placeholder with a
+  // real equation of motion: I(L) * dw/dt = netTorque. This is what makes
+  // turnsRemaining (and therefore the capacity interlock above, and the
+  // barrel/ground-cable visuals below) respond to actual physics -- a
+  // heavily spooled drum (high I) now visibly accelerates more sluggishly
+  // than a nearly empty one at the same duty, and the drum can fail to move
+  // at all if available torque can't overcome the tension-derived load.
+  const nowMs = performance.now();
+  // Clamped so a backgrounded tab (rAF paused, huge gap on resume) doesn't
+  // integrate one giant unrealistic step -- 0.1s is generous for a visible
+  // 60fps-ish loop (~0.016s typical) while bounding the worst case.
+  const dt = Math.min(0.1, Math.max(0, (nowMs - lastPhysicsTime) / 1000));
+  lastPhysicsTime = nowMs;
+
+  // Live from the Motor & drum torque check panel -- same fields that box
+  // already reads, so loading the "Sandvik reel motor" preset there changes
+  // this integration too, not just that panel's static readout.
+  const stallNow = parseFloat(motorStallTorque.value) || 0;
+  const ratioNow = parseFloat(gearRatio.value) || 1;
+  const effNow = parseFloat(driveEff.value) || 0;
+  const torqueAvailNow = (dutyPercent / 100) * stallNow * ratioNow * effNow;
+
+  // Cable tension -> load torque at the CURRENT wrap radius (grows as the
+  // drum fills, same layerRadius() the wrap-layer model uses -- not a fixed
+  // circumference).
+  //
+  // Asymmetric model (2026-08-06, replacing the earlier symmetric
+  // "opposes whatever the drum is currently doing" version): tension has a
+  // FIXED physical direction, toward UNWIND, because it's caused by the rig
+  // pulling cable off the drum -- it isn't a friction-like force that
+  // flips sign with the drum's current motion.
+  //   - REEL IN (windOut): tension opposes the motor, which has to
+  //     actively pull cable in against it -- a real load, unchanged from
+  //     before. If tension wins (torqueAvailNow < loadTorqueMag), the drum
+  //     gets DRAGGED into unwinding despite the wind command -- a real
+  //     failure mode (an underpowered winch getting overpowered by its
+  //     load), not clamped away.
+  //   - UNREEL (unwindOut): tension is what's paying the cable out in the
+  //     first place, so it now ASSISTS the commanded unwind torque instead
+  //     of resisting it -- this is the fix for the case the council-style
+  //     verification caught: under the old symmetric model, the real
+  //     Sandvik motor spec (629 Nm at the drum) couldn't overcome the real
+  //     200 lbf vendor tension (725-772 Nm at this drum's radius) in
+  //     EITHER direction, so unwind could never start at all. Simplifying
+  //     note: a real hydraulic unreel is more a controlled release than an
+  //     active drive (the valve mostly limits speed rather than overcoming
+  //     resistance) -- modeling it as "tension adds to the commanded
+  //     torque" captures the practical effect (whether/how fast payout
+  //     happens) without modeling the valve itself.
+  //   - HOLD (neither commanded): unchanged from before -- no
+  //     counterbalance/holding-valve spec exists for this drive, so a
+  //     stationary, uncommanded drum is still treated as fully held against
+  //     tension (can't spontaneously start moving) rather than inventing a
+  //     holding-torque number. Real hydraulic reel drives normally include
+  //     exactly this kind of valve for this reason. While coasting after
+  //     being in motion, tension still acts as a symmetric brake back to a
+  //     stop (see the overshoot clamp just below), same as before.
+  const tensionN = (parseFloat(cableTensionLbfInput.value) || 0) * LBF_TO_N;
+  const currentRadiusM = radiusAtTurns(turnsRemaining);
+  const loadTorqueMag = tensionN * currentRadiusM;
+
+  let appliedTorque, netTorque;
+  if (windOut) {
+    appliedTorque = torqueAvailNow;
+    netTorque = torqueAvailNow - loadTorqueMag;
+  } else if (unwindOut) {
+    appliedTorque = -torqueAvailNow;
+    netTorque = -(torqueAvailNow + loadTorqueMag);
+  } else {
+    appliedTorque = 0;
+    netTorque = Math.abs(drumOmega) > 1e-6 ? -Math.sign(drumOmega) * loadTorqueMag : 0;
+  }
+
+  const spooledBeforeM = lengthFromTurns(turnsRemaining);
+  const I_now = drumInertiaOfLength(spooledBeforeM);
+  const angularAccel = I_now > 0 ? netTorque / I_now : 0; // rad/s^2
+  let newOmega = drumOmega + angularAccel * dt;
+
+  // Dry-friction-style clamp: when coasting (no applied torque), the load
+  // torque should bring the drum to a stop, not overshoot past zero and
+  // reverse -- a full LCP solve is overkill for a demo-grade sim, this is
+  // the standard cheap approximation.
+  if (appliedTorque === 0 && drumOmega !== 0 && Math.sign(newOmega) !== Math.sign(drumOmega)) {
+    newOmega = 0;
+  }
+
+  const maxRpmNow = parseFloat(maxDrumRpmInput.value) || HYD_SANDVIK_PEAK_REEL_RPM;
+  const maxOmega = maxRpmNow * 2 * Math.PI / 60;
+  newOmega = Math.max(-maxOmega, Math.min(maxOmega, newOmega));
+  drumOmega = newOmega;
+
+  const turnsDelta = (drumOmega / (2 * Math.PI)) * dt;
+  turnsRemaining = Math.max(0, Math.min(TOTAL_TURNS_CAPACITY, turnsRemaining + turnsDelta));
+
+  // Barrel visual now spins at the real angular rate (rad/s * dt), not a
+  // stylized per-frame constant -- sign matches the old convention (unwind
+  // spun it one way, wind the other): drumOmega>0 is winding, which spun
+  // the barrel the OPPOSITE way unwind did in the old code, hence the minus.
+  barrel.rotation.x -= drumOmega * dt;
+
+  drumRpmValEl.textContent = `${(drumOmega * 60 / (2 * Math.PI)).toFixed(2)} RPM${windOut ? ' (winding)' : unwindOut ? ' (unwinding)' : ''}`;
+  drumInertiaValEl.textContent = `${I_now.toFixed(1)} kg·m²`;
+
+  const spooledLengthM = lengthFromTurns(turnsRemaining);
+
+  // Ground cable (scene units) driven directly from the real spooled
+  // fraction, rather than its own separately-integrated accumulator --
+  // removes a second piece of state that could drift out of sync with the
+  // real turnsRemaining/capacity model above.
+  const maxPayoutVal = parseFloat(maxPayoutInput.value) || 2.5;
+  const payoutFraction = 1 - (spooledLengthM / DRUM_L_MAX_M);
+  const payoutLength = Math.max(0, Math.min(maxPayoutVal, payoutFraction * maxPayoutVal));
+  groundCable.scale.x = Math.max(0.001, payoutLength);
+  groundCable.position.x = BARREL_POS.x + payoutLength / 2;
+  payoutValEl.value = payoutLength.toFixed(2) + ' u';
+  const capacityPct = 100 * spooledLengthM / DRUM_L_MAX_M;
+  const currentLayer = Math.floor(turnsRemaining / WRAPS_PER_LAYER);
+
+  const encoderFault = encoderFaultInput.checked;
+  const blockPctNow = parseFloat(blockPctInput.value) || 0;
+  const warnPctNow = parseFloat(warnPctInput.value) || 0;
+  const rearmMarginNow = parseFloat(rearmMarginInput.value) || 0;
+
+  // Hysteresis: once blocked, capacity has to climb back above block+margin
+  // before it clears -- a single hard threshold chatters right at the
+  // boundary, exactly the nuisance-lockout failure mode the council flagged.
+  if (!trammingBlocked && capacityPct <= blockPctNow) trammingBlocked = true;
+  else if (trammingBlocked && capacityPct >= blockPctNow + rearmMarginNow) trammingBlocked = false;
+
+  const blocked = encoderFault || trammingBlocked; // fault fails closed regardless of capacity, same posture as DS-SF-02
+  const warn = !blocked && capacityPct <= warnPctNow;
+
+  turnsValEl.textContent = `${turnsRemaining.toFixed(1)} / ${TOTAL_TURNS_CAPACITY.toFixed(1)}`;
+  layerValEl.textContent = currentLayer + 1;
+  spooledLenValEl.textContent = `${spooledLengthM.toFixed(1)} / ${DRUM_L_MAX_M.toFixed(1)} m (${capacityPct.toFixed(1)}%)`;
+  capacityBarEl.style.width = Math.max(0, Math.min(100, capacityPct)) + '%';
+  capacityBarEl.style.background = blocked ? 'var(--warn)' : (warn ? '#e0a83c' : 'var(--good)');
+
+  trammingStateText.textContent = blocked ? 'TRAM BLOCKED' : 'TRAM ALLOWED';
+  trammingStateText.style.color = blocked ? 'var(--warn)' : (warn ? '#e0a83c' : 'var(--good)');
+  trammingState.style.borderColor = blocked ? 'var(--warn)' : (warn ? '#e0a83c' : 'var(--good)');
+  trammingState.style.background = blocked ? 'rgba(226,87,76,0.12)' : (warn ? 'rgba(224,168,60,0.12)' : 'transparent');
+  trammingStateSub.textContent = encoderFault
+    ? 'encoder fault simulated -- fails closed regardless of capacity'
+    : trammingBlocked
+      ? `capacity ${capacityPct.toFixed(1)}% at/below block threshold ${blockPctNow}%, re-allows above ${(blockPctNow + rearmMarginNow).toFixed(1)}%`
+      : warn
+        ? `capacity ${capacityPct.toFixed(1)}% at/below warn threshold ${warnPctNow}%, not yet blocked`
+        : `capacity ${capacityPct.toFixed(1)}%, above both thresholds`;
+
+  draw();
+  requestAnimationFrame(stepReelTrim);
+}
+requestAnimationFrame(stepReelTrim);
+
+// ---------- Section expand/collapse-all ----------
+document.getElementById('expandAllBtn').addEventListener('click', () => {
+  document.querySelectorAll('details').forEach(d => d.open = true);
+});
+document.getElementById('collapseAllBtn').addEventListener('click', () => {
+  document.querySelectorAll('details').forEach(d => d.open = false);
+});
+</script>
+</body>
+</html>
