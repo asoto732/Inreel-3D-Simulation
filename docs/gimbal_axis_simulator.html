@@ -552,17 +552,53 @@ const PIVOT_Y = 0.75; // hoisted above the yoke-loading block below, which needs
 // documented 43mm residual. Flagged, not resolved -- ask whoever has the
 // source CAD tool for this part's exact stub-center coordinates (same as
 // every other part in this file) to replace this estimate.
+//
+// outer_yoke.stl ALSO REPLACED (2026-08-09) with "BG02375110_A_1-Gimbal
+// Outer Yoke Concept 2". This one is more consequential than the inner_yoke
+// swap above: NATIVE_PIVOT itself has always been outer_yoke's OWN native
+// coordinates (it's the part every other offset is measured relative to),
+// so replacing it means re-deriving the pivot from scratch, in the new
+// part's own frame, then recomputing FRAME_NATIVE_OFFSET and
+// INNER_YOKE_NATIVE_OFFSET against the new value.
+//
+// Same mesh-only method as inner_yoke (no exact CAD coordinates for this
+// part either): binary-parsed the STL, circle-fit the axis-0 stub (found at
+// two Y-extremes, matching the old top/bottom-stub convention) and the
+// axis-1 feature (found at the two X-extremes). Cross-checks all landed
+// tight: axis-0's stub circle-fits agree to 0.01in (X=7.946, Z=1.486/1.500),
+// axis-1's two ends agree to 0.05in (Y=6.563/6.607, Z=1.511/1.496) -- and
+// notably axis-0 and axis-1 agree on Z (~1.50) independently, echoing the
+// old outer_yoke's own Z=1.5000 exactly, which reads like a real shared
+// datum-plane convention rather than coincidence. Used NATIVE_PIVOT =
+// {7.946, 6.585, 1.500} (the four estimates above, averaged / rounded to
+// the common Z).
+//
+// Open question, NOT resolved here: axis-1 is asymmetric on this part in a
+// way the old outer_yoke wasn't. The left end is a genuine bore (confirmed
+// hollow -- 0 vertices at its center). The right end is a gear-toothed boss
+// with a SOLID pin/tab protruding from its center (confirmed solid -- real
+// vertices right at the fitted center, plus a separate tab feature at the
+// same Y). The new inner_yoke has male stubs on BOTH ends, so the left
+// side's stub-into-bore mate is fine, but the right side would be
+// male-pin-meets-male-stub, which isn't a valid mechanical mate as
+// modeled. Possibilities: the right "pin" isn't the axis-1 mate at all
+// (maybe an encoder shaft or lock feature, unrelated to the pivot), or a
+// cover/bracket not in this repo is meant to go there. Averaging both
+// ends' Y/Z for NATIVE_PIVOT (above) sidesteps the question for
+// visualization purposes -- the render looks correctly connected either
+// way, since both ends are close together -- but it doesn't answer it.
+// Flagged for whoever has the source CAD.
 const IN_TO_M = 0.0254;
-const NATIVE_PIVOT = { x: 7.1061, y: 7.4432, z: 1.5000 };
+const NATIVE_PIVOT = { x: 7.946, y: 6.585, z: 1.500 };
 const FRAME_NATIVE_OFFSET = {
-  x: 7.1061 - 3.3266,
-  y: ((-2.2958 + 17.1822) / 2) - ((-5.7665 + 13.2085) / 2),
-  z: 1.5000 - (-14.1875),
+  x: 7.946 - 3.3266,
+  y: 6.585 - ((-5.7665 + 13.2085) / 2),
+  z: 1.500 - (-14.1875),
 };
 const INNER_YOKE_NATIVE_OFFSET = {
-  x: 7.1061 - (-1.45 + 8.55) / 2,
-  y: 7.4432 - 2.765,
-  z: 1.5000 - 11.09,
+  x: 7.946 - (-1.45 + 8.55) / 2,
+  y: 6.585 - 2.765,
+  z: 1.500 - 11.09,
 };
 const stlLoader = new THREE.STLLoader();
 
@@ -710,7 +746,7 @@ function transformYokeGeometry(geo, { offset = { x: 0, y: 0, z: 0 }, worldY = 0,
 // reuse a stale cached copy. (2026-08-09: bumped for the inner_yoke.stl
 // Concept 2 swap, after a stale-cache report -- old mesh + new transform
 // numbers rendered disconnected and floating outside the assembly.)
-const CAD_ASSET_VERSION = '2026-08-09';
+const CAD_ASSET_VERSION = '2026-08-09-2';
 
 function loadYokePart(url, parent, transformOpts, material, fallback) {
   stlLoader.load(`${url}?v=${CAD_ASSET_VERSION}`,
@@ -780,6 +816,14 @@ const outerRing = makeQR24Disc(0.55, 0.05, 0x4f8ff0);
 outerRing.rotation.x = Math.PI / 2; // ring sits flat around the vertical cable at rest
 outerGroup.add(outerRing);
 const outerYokeMat = new THREE.MeshStandardMaterial({ color: 0x4f8ff0, roughness: 0.45, metalness: 0.4 });
+// Same rotation flag set kept unchanged across the 2026-08-09 outer_yoke
+// replacement -- the analytic rationale further up (rotateZ180 etc.) was
+// derived against the OLD part's exact hole coordinates and hasn't been
+// re-derived symbolically for the new mesh. Instead it was verified
+// empirically: rendered with these exact flags (scripts/render_combined.py,
+// then live), right-side-up, correctly connected to both frame and the new
+// inner_yoke. If a future geometry needs different flags, don't assume
+// these still apply -- re-render and check before trusting them.
 loadYokePart('../cad/outer_yoke.stl', outerGroup, { axis1Vertical: true, rotateY180: true, rotateY90: true, rotateX90: true, rotateZ180: true }, outerYokeMat, outerRing);
 
 const innerGroup = new THREE.Group();

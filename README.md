@@ -26,7 +26,7 @@ Full datasheet: `edb_1590914_eng_us.pdf` (see `dri` repo's `CLAUDE.md` for the r
 | File | Part | Native size (in) |
 |---|---|---|
 | `mounting_frame.stl` | Base frame, bolts to the rig, carries the axis-0 bearing bosses | 17.3 × 21.4 × 20.8 |
-| `outer_yoke.stl` | Rectangular yoke ring — bosses on one side pair bolt to the frame (axis-0), the perpendicular pair carries the inner yoke (axis-1) | 17.0 × 20.9 × 4.1 |
+| `outer_yoke.stl` | Rectangular yoke ring — bosses on one side pair bolt to the frame (axis-0), the perpendicular pair carries the inner yoke (axis-1). **Replaced 2026-08-09** — see below. | 16.5 × 20.9 × 3.8 |
 | `inner_yoke.stl` | Tube holding the encoder/cable passthrough, with two stub pivot shafts for the outer yoke's axis-1 bosses. **Replaced 2026-08-09** — see below. | 15.9 × 6.1 × 12.0 |
 
 These are wired into `docs/gimbal_axis_simulator.html` (loaded live via `STLLoader`, not embedded — at ~1.8–4.7MB each, base64-embedding like the encoder experiment would have bloated the HTML past being readable/diffable, so the simulator now needs to be served rather than double-clicked; see below). The procedural placeholder frame/rings remain as a fallback if a load fails.
@@ -98,6 +98,18 @@ Verified before touching the live JS: both pivot axes still land on a single sha
 Rendered and visually checked (`scripts/render_combined.py`, then live in the browser) before shipping: the new part sits centered, right-side-up, and correctly connected to the pivot inside outer_yoke's ring, with a visible per-side gap smaller than the old part's documented 43mm residual. Both sliders confirmed to still move it. `flip180Z` was left at its old default (`false`) — the old part's reasoning for that choice was specific to its own exact coordinates and doesn't carry over, so this is an unverified starting guess, not a confirmed one; if the live sim shows the part mirrored, flip it.
 
 **Open item:** ask whoever has the source CAD tool for this part's exact stub-center coordinates (same ask that was answered for the frame/outer_yoke/old inner_yoke) to replace this estimate with a real one.
+
+## outer_yoke.stl also replaced with Concept 2 (2026-08-09)
+
+`cad/outer_yoke.stl` is now `BG02375110_A_1-Gimbal Outer Yoke Concept 2`. More consequential than the inner_yoke swap above: `NATIVE_PIVOT` has always been outer_yoke's own native coordinates — every other part's offset is measured relative to it — so this replacement means re-deriving the shared pivot itself, not just adding an offset. Old size 17.0 × 20.9 × 4.1in; new part is 16.5 × 20.9 × 3.8in (same Y span, close overall scale).
+
+Same mesh-only method as inner_yoke, no exact CAD coordinates available for this part either. Circle-fit axis-0's stub shaft at its two Y-extremes (top/bottom, matching the old top/bottom-stub convention): X=7.946in, Z=1.486in and Z=1.500in — tight agreement. Circle-fit axis-1's feature at its two X-extremes (left/right): Y=6.563in/Z=1.511in (left) and Y=6.607in/Z=1.496in (right) — also tight. Axis-0 and axis-1 independently landed near Z=1.50in, matching the *old* outer_yoke's own Z=1.5000in exactly — reads like a real shared datum plane on this assembly, not a coincidence. Used `NATIVE_PIVOT = {7.946, 6.585, 1.500}` (the four estimates above, averaged, with Z rounded to the value they all bracket).
+
+**Open question, not resolved:** axis-1 is asymmetric on this part in a way the old outer_yoke wasn't. The left end is a confirmed-hollow bore (0 vertices at the fitted center — a real hole). The right end is a gear-toothed boss with a confirmed-**solid** pin/tab at its center (real vertices right at the fitted center, plus a separate tab feature at the same Y) — a male feature, not a hole. The new inner_yoke has male stubs on *both* ends, so the left side mates fine (stub into bore), but the right side would be male-pin-meets-male-stub, which isn't a valid mechanical mate as modeled. Possibilities: the right "pin" isn't the axis-1 mate at all (an encoder shaft stub, a lock feature — the real hardware's QR24 encoder does have a separate sensor/positioning-element pair, which this might be echoing), or a cover/bracket not in this repo is meant to go there. Averaging both ends' Y/Z for `NATIVE_PIVOT` sidesteps the question for visualization purposes only — both ends are close enough together (within 0.05in) that the render looks correctly connected either way — it does not answer what the right-side pin is actually for.
+
+Rendered and visually checked (`scripts/render_combined.py`, then live in the browser) before shipping: sits centered, right-side-up, connected to both the frame (axis-0) and the new inner_yoke (axis-1). Both sliders confirmed to still move the full assembly through a wide range (checked at X=−45°, Y=−90°) without anything visually detaching. The existing rotation flag set (`rotateY180`, `rotateY90`, `rotateX90`, `rotateZ180`) was kept unchanged and re-verified empirically against the new mesh, rather than re-derived analytically — the written rationale further up this file for *why* those specific flags are correct still refers to the old part's exact numbers.
+
+**Open item:** same as inner_yoke — ask whoever has the source CAD tool for this part's exact axis-0/axis-1 coordinates, and in particular what the right-side pin feature is, to replace this estimate and resolve the mating question above.
 
 ## Duty cycle override, and a 5 HP hydraulic motor test case (2026-07-27)
 

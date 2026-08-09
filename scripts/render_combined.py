@@ -17,24 +17,50 @@ IN_TO_M = 0.0254
 # two pairs have substantially different spans, 15.40in vs 12.00in -- a
 # midpoint-aligned single rigid transform leaves a real ~1.7in/43mm residual
 # per end, much larger than axis-0's ~6mm; flagged, not silently absorbed).
-NATIVE_PIVOT = np.array([7.1061, 7.4432, 1.5000])
+# Numbers below (X=7.1061 etc.) are HISTORICAL -- they described the
+# original outer_yoke/inner_yoke, both since replaced. Kept only so old
+# commits/renders stay explicable; NATIVE_PIVOT and the two offsets below
+# are what's actually live.
+#
+# 2026-08-09: outer_yoke.stl replaced with "BG02375110_A_1-Gimbal Outer
+# Yoke Concept 2". NATIVE_PIVOT is always outer_yoke's own native
+# coordinates (every other offset is measured relative to it), so this
+# replacement means re-deriving the pivot itself, not just adding an
+# offset. Mesh-derived (no exact CAD coordinates for this part either):
+# circle-fit axis-0's stub (two Y-extremes, X=7.946/Z=1.486 and
+# X=7.946/Z=1.500 -- tight agreement) and axis-1's feature at the two
+# X-extremes (Y=6.563/Z=1.511 left, Y=6.607/Z=1.496 right). Both axes
+# independently landed near Z=1.50, echoing the old part's own Z=1.5000 --
+# reads like a real shared datum plane, not coincidence.
+#
+# Open question, unresolved: axis-1 is asymmetric here in a way the old
+# outer_yoke wasn't. Left end is a confirmed-hollow bore; right end is a
+# gear-toothed boss with a confirmed-SOLID pin at its center. The new
+# inner_yoke has male stubs on both ends, so left mates fine but right
+# would be male-pin-meets-male-stub -- not a valid mate as modeled. Maybe
+# the right "pin" isn't the axis-1 mate at all (encoder shaft? lock
+# feature?), or a cover/bracket not in this repo belongs there. Averaging
+# both ends for NATIVE_PIVOT sidesteps this for visualization (both ends
+# are close together, so the render looks connected either way) without
+# answering it. See the matching, more detailed comment in
+# gimbal_axis_simulator.html.
+NATIVE_PIVOT = np.array([7.946, 6.585, 1.500])
 FRAME_NATIVE_OFFSET = np.array([
-    7.1061 - 3.3266,
-    ((-2.2958 + 17.1822) / 2) - ((-5.7665 + 13.2085) / 2),
-    1.5000 - (-14.1875),
+    7.946 - 3.3266,
+    6.585 - ((-5.7665 + 13.2085) / 2),
+    1.500 - (-14.1875),
 ])
 # 2026-08-09: inner_yoke.stl replaced with "BG02375111_A_1-Gimbal Inner Yoke
-# Concept 2" -- own native frame, unrelated to the numbers above (kept for
-# history, describe a part no longer in this repo). No exact CAD coordinates
-# available for the new part; this offset is mesh-derived (STL binary-parsed,
-# stub shafts circle-fit directly) -- see the matching, more detailed comment
-# in gimbal_axis_simulator.html for the full derivation and its flagged
-# span ambiguity (~25mm/side estimated gap, ask for exact coordinates to
-# replace this).
+# Concept 2" -- own native frame. No exact CAD coordinates available for the
+# new part; this offset is mesh-derived (STL binary-parsed, stub shafts
+# circle-fit directly) -- see the matching, more detailed comment in
+# gimbal_axis_simulator.html for the full derivation and its flagged span
+# ambiguity (~25mm/side estimated gap, ask for exact coordinates to replace
+# this).
 INNER_YOKE_OFFSET = np.array([
-    7.1061 - (-1.45 + 8.55) / 2,
-    7.4432 - 2.765,
-    1.5000 - 11.09,
+    7.946 - (-1.45 + 8.55) / 2,
+    6.585 - 2.765,
+    1.500 - 11.09,
 ])
 PIVOT_Y = 0.75
 
