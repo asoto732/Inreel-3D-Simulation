@@ -995,10 +995,10 @@ scene.add(groundCable);
 
 // ---------- Obstacle snag scenario: procedural obstacle mesh (2026-08-09) ----------
 // Simple placeholder geometry, no CAD import -- just a visual anchor for the
-// "Obstacle Snag" demo scenario further down, sitting along the cable's path
-// between the gimbal (pivot at world origin-ish, PIVOT_Y up) and the reel
-// barrel (BARREL_POS, world Z~1.05). Not dimensionally real, same spirit as
-// the frame/rig marker boxes above it.
+// "Obstacle Snag" demo scenario further down, marking a snag point out to
+// the side of the gimbal's resting cable line (see exact placement/axis
+// convention on obstacleMesh.position.set(...) below). Not dimensionally
+// real, same spirit as the frame/rig marker boxes above it.
 const obstacleGeo = new THREE.IcosahedronGeometry(0.12, 0);
 // Jagged-rock look: nudge each vertex in/out along its own direction from
 // the origin by a small deterministic amount (a fixed function of its index,
@@ -1017,9 +1017,14 @@ const obstacleGeo = new THREE.IcosahedronGeometry(0.12, 0);
 }
 const obstacleMat = new THREE.MeshStandardMaterial({ color: 0x5a6473, roughness: 0.8, metalness: 0.1 });
 const obstacleMesh = new THREE.Mesh(obstacleGeo, obstacleMat);
-// Off-axis in X (the catch is a lateral snag) and partway in Z between the
-// gimbal column (~0) and the barrel (BARREL_POS.z=1.05).
-obstacleMesh.position.set(0.22, 0.22, 0.55);
+// Placed in the "-Y (away from rig), +X (right)" quadrant, per the sim's
+// own labeled axis convention (see the reference-axes labelSpecs further
+// down: +Y/world +Z is toward the rig, +X/world +X is right) -- i.e.
+// negative world Z, positive world X. Moved here 2026-08-09 after it first
+// landed at positive Z (toward the rig, next to BARREL_POS.z=1.05, which
+// read as "behind the gimbal next to the drum" -- the opposite side from
+// what was wanted).
+obstacleMesh.position.set(0.4, 0.22, -0.5);
 scene.add(obstacleMesh);
 
 // Color/glow keyed to the same phase names the "Obstacle snag" readout
