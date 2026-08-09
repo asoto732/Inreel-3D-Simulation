@@ -1193,6 +1193,16 @@ function updateHangingCable(payoutLength, phase, wrapFactor) {
   powerSupplyPole.position.copy(base).setY(POWER_SUPPLY_POLE_HEIGHT / 2);
   powerSupplyAnchorMesh.position.copy(anchor);
 
+  // The short straight white cylinder (`cable`) never represented anything
+  // beyond "there's a cable here" -- always straight, no notion of tension.
+  // Hidden for the Obstacle Snag scenario's duration so the sagging supply
+  // cable (which DOES show tension/slack) is the only thing reading as
+  // "the cable connected to the gimbal" while that story is being told.
+  // `hub` (the exit-point marker) and the invisible drag-handle are left
+  // alone -- hub's still a useful reference point with the bar gone, and
+  // the drag-handle's own visibility is unrelated to this toggle.
+  cable.visible = !snagging;
+
   const d = _supplyCableStart.distanceTo(anchor);
   const slack = Math.max(0, SUPPLY_CABLE_SLACK_PER_PAYOUT * payoutLength);
   const sagDepth = Math.min(SUPPLY_CABLE_MAX_SAG, Math.sqrt(Math.max(0, 3 * d * slack / 8)));
