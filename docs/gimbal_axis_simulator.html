@@ -1041,6 +1041,128 @@ function updateObstacleMeshVisual(phase) {
   obstacleMat.emissiveIntensity = glow;
 }
 
+// ---------- Power supply anchor + hanging supply cable (2026-08-09) ----------
+// Simple placeholder geometry, no CAD import -- a fixed external anchor the
+// gimbal's own cable drapes to. Placed at negative X and negative Z: the
+// rig marker and reel barrel are both at positive Z, so this sits off to
+// the side and away from the rig, reading as a distinct run rather than
+// overlapping either of them (same reasoning as the obstacle's placement
+// above, opposite corner of the scene from it so neither run crosses over
+// the other's anchor).
+const POWER_SUPPLY_BASE = new THREE.Vector3(-1.3, 0, -0.3);
+const POWER_SUPPLY_POLE_HEIGHT = 0.6;
+const powerSupplyMat = new THREE.MeshStandardMaterial({ color: 0x2f3a4a, roughness: 0.7, metalness: 0.2 });
+const powerSupplyPole = new THREE.Mesh(new THREE.BoxGeometry(0.12, POWER_SUPPLY_POLE_HEIGHT, 0.12), powerSupplyMat);
+powerSupplyPole.position.copy(POWER_SUPPLY_BASE).setY(POWER_SUPPLY_POLE_HEIGHT / 2);
+scene.add(powerSupplyPole);
+// Small standoff sphere marking exactly where the cable attaches, same
+// visual language as `hub` (the matching marker at the gimbal end).
+const POWER_SUPPLY_ANCHOR = POWER_SUPPLY_BASE.clone().add(new THREE.Vector3(0, POWER_SUPPLY_POLE_HEIGHT - 0.06, 0));
+const powerSupplyAnchorMesh = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), hubMat);
+powerSupplyAnchorMesh.position.copy(POWER_SUPPLY_ANCHOR);
+scene.add(powerSupplyAnchorMesh);
+
+// Hanging cable curve: gimbal cable-exit point (`hub`, moves with
+// deflection) to POWER_SUPPLY_ANCHOR (fixed), sagging via a simple
+// shallow-sag parabolic approximation of a catenary rather than a rigorous
+// physical solve -- for a cable of length L strung between two points a
+// span d apart, midpoint sag h relates to the SLACK (L-d, the length
+// beyond a straight line) by L ~= d*(1 + 8(h/d)^2/3), i.e.
+// h ~= sqrt(3*d*(L-d)/8), the standard small-sag-ratio approximation
+// (valid roughly while h/d stays well under ~0.3, which the constants
+// below keep it within). Slack is driven by the drum inertia model's live
+// payoutLength -- computed in stepReelTrim() below and passed in each
+// frame, not duplicated here -- so more paid-out cable produces more
+// visible droop and a fully-spooled drum (payoutLength=0) pulls this taut
+// (sagDepth=0 exactly, not just "less droopy").
+const SUPPLY_CABLE_SLACK_PER_PAYOUT = 0.1;
+const SUPPLY_CABLE_MAX_SAG = 0.6;
+const SUPPLY_CABLE_RADIUS = 0.022;
+const SUPPLY_CABLE_TUBULAR_SEGMENTS = 24;
+const SUPPLY_CABLE_RADIAL_SEGMENTS = 6;
+
+// Builds a tube BufferGeometry's static topology (index + uv buffers) ONCE,
+// with zeroed positions. updateHangingCable() below only ever rewrites the
+// POSITION attribute of this same geometry, every frame -- never allocates
+// a new geometry -- per the performance ask.
+function buildTubeGeometry(tubularSegments, radialSegments) {
+  const geometry = new THREE.BufferGeometry();
+  const ringVerts = radialSegments + 1;
+  const vertCount = (tubularSegments + 1) * ringVerts;
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
+  const uvs = new Float32Array(vertCount * 2);
+  let uvIdx = 0;
+  for (let i = 0; i <= tubularSegments; i++) {
+    for (let j = 0; j <= radialSegments; j++) {
+      uvs[uvIdx * 2] = i / tubularSegments;
+      uvs[uvIdx * 2 + 1] = j / radialSegments;
+      uvIdx++;
+    }
+  }
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  const indices = [];
+  for (let i = 0; i < tubularSegments; i++) {
+    for (let j = 0; j < radialSegments; j++) {
+      const a = i * ringVerts + j, b = (i + 1) * ringVerts + j;
+      const c = (i + 1) * ringVerts + (j + 1), d = i * ringVerts + (j + 1);
+      indices.push(a, b, d, b, c, d);
+    }
+  }
+  geometry.setIndex(indices);
+  return geometry;
+}
+
+// Rewrites `geometry`'s position attribute (and recomputes normals) from
+// `curve`, using Frenet frames for each ring's orientation. Indexes with
+// the SAME `i*ringVerts+j` stride buildTubeGeometry() used for its index
+// buffer above, so this only ever moves vertices that already exist.
+function updateTubeFromCurve(geometry, curve, tubularSegments, radius, radialSegments) {
+  const frames = curve.computeFrenetFrames(tubularSegments, false);
+  const posAttr = geometry.attributes.position;
+  const ringVerts = radialSegments + 1;
+  for (let i = 0; i <= tubularSegments; i++) {
+    const p = curve.getPointAt(i / tubularSegments);
+    const N = frames.normals[i], B = frames.binormals[i];
+    for (let j = 0; j <= radialSegments; j++) {
+      const theta = (j / radialSegments) * Math.PI * 2;
+      const cos = -Math.cos(theta), sin = Math.sin(theta);
+      posAttr.setXYZ(i * ringVerts + j,
+        p.x + radius * (cos * N.x + sin * B.x),
+        p.y + radius * (cos * N.y + sin * B.y),
+        p.z + radius * (cos * N.z + sin * B.z));
+    }
+  }
+  posAttr.needsUpdate = true;
+  geometry.computeVertexNormals();
+}
+
+const supplyCableGeo = buildTubeGeometry(SUPPLY_CABLE_TUBULAR_SEGMENTS, SUPPLY_CABLE_RADIAL_SEGMENTS);
+const supplyCableMesh = new THREE.Mesh(supplyCableGeo, cableMat); // reuses the same white/gray cable material as the gimbal-side cable
+scene.add(supplyCableMesh);
+// Reused every frame below to avoid a fresh Vector3 allocation per call.
+const _supplyCableStart = new THREE.Vector3();
+const _supplyCableMid = new THREE.Vector3();
+
+// Called from stepReelTrim() every frame, right after it computes the drum
+// model's current payoutLength -- so this always reflects both the LATEST
+// gimbal deflection (hub's world position, already updated by whatever
+// render() call happened this frame: a slider drag, a preset click, the
+// Obstacle Snag scenario, or the drag-cable interaction) and the latest
+// spooled/paid-out state, with no separate/parallel deflection tracking.
+function updateHangingCable(payoutLength) {
+  scene.updateMatrixWorld(); // defensive -- cheap and idempotent if already current this frame
+  hub.getWorldPosition(_supplyCableStart);
+  const d = _supplyCableStart.distanceTo(POWER_SUPPLY_ANCHOR);
+  const slack = Math.max(0, SUPPLY_CABLE_SLACK_PER_PAYOUT * payoutLength);
+  const sagDepth = Math.min(SUPPLY_CABLE_MAX_SAG, Math.sqrt(Math.max(0, 3 * d * slack / 8)));
+  _supplyCableMid.copy(_supplyCableStart).add(POWER_SUPPLY_ANCHOR).multiplyScalar(0.5);
+  _supplyCableMid.y -= sagDepth;
+  const curve = new THREE.QuadraticBezierCurve3(_supplyCableStart.clone(), _supplyCableMid.clone(), POWER_SUPPLY_ANCHOR.clone());
+  updateTubeFromCurve(supplyCableGeo, curve, SUPPLY_CABLE_TUBULAR_SEGMENTS, SUPPLY_CABLE_RADIUS, SUPPLY_CABLE_RADIAL_SEGMENTS);
+}
+updateHangingCable(0); // initial paint (taut, zero payout at load) so the tube isn't a degenerate zeroed mesh before stepReelTrim's rAF loop runs its first frame
+
 // ---------- Reference axes (2026-07-24) ----------
 // Added because "left/right", "X-axis", "Y-axis", "forward/backward" were
 // being used to mean different things in conversation. These are WORLD axes
@@ -2099,6 +2221,7 @@ function stepReelTrim() {
   groundCable.scale.x = Math.max(0.001, payoutLength);
   groundCable.position.x = BARREL_POS.x + payoutLength / 2;
   payoutValEl.value = payoutLength.toFixed(2) + ' u';
+  updateHangingCable(payoutLength);
   const capacityPct = 100 * spooledLengthM / DRUM_L_MAX_M;
   const currentLayer = Math.floor(turnsRemaining / WRAPS_PER_LAYER);
 
