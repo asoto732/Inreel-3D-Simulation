@@ -111,6 +111,18 @@
 
   <div class="grid">
     <div class="panel">
+      <details class="axis-block" open style="border-left-color:#a78bfa;">
+        <summary class="axis-title">Demo scenarios <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; gimbal pull test cases, worst case to expected</span></summary>
+        <div class="note" style="margin-top:0; margin-bottom:12px; border-top:none; padding-top:0;">
+          Each button drives both axes directly to an exact angle (and turns
+          off "drive Y from tension" below, so the value holds rather than
+          being overridden). Sign convention matches the rest of this sim:
+          positive X is a lateral pull, positive Y swings the cable away
+          from the rig, negative Y pulls it in toward the rig.
+        </div>
+        <div id="scenarioButtons" style="display:flex; flex-direction:column; gap:6px;"></div>
+      </details>
+
       <details class="axis-block" style="border-left-color:#4f8ff0;">
         <summary class="axis-title">P-control tuning <span class="adv-tag">advanced</span></summary>
         <div class="field">
@@ -1185,10 +1197,57 @@ tension.addEventListener('input', () => { applyTensionDrive(); render(); });
 tensionDrive.addEventListener('change', () => { applyTensionDrive(); render(); });
 applyTensionDrive();
 
+// ---------- Demo scenarios: gimbal pull test cases ----------
+// Fixed (x, y) deflection pairs a reviewer can jump straight to, rather than
+// hand-dialing sliders to reproduce "what does +45 on X look like" during a
+// demo. x/y are degrees, matching a0Deg/a1Deg directly (both are already
+// "deflection from zero", no zero-offset math needed here). Y can go
+// negative (pulled in toward the rig) -- tension-driven Y can't produce
+// that (0-100% only ever swings away, see applyTensionDrive above), so
+// every scenario explicitly turns tension-drive off first.
+const SCENARIOS = [
+  { n: 1, label: 'X at +45°', tag: 'worst case, hard stop', x: 45, y: 0 },
+  { n: 2, label: 'X at −45°', tag: 'worst case, hard stop', x: -45, y: 0 },
+  { n: 3, label: 'Y at +45°', tag: 'away from rig', x: 0, y: 45 },
+  { n: 4, label: 'Y at −20°', tag: 'pulled in toward rig', x: 0, y: -20 },
+  { n: 5, label: 'X +20°, Y +54°', tag: 'combined pull', x: 20, y: 54 },
+];
+const scenarioBtnEls = [];
+const scenarioButtonsEl = document.getElementById('scenarioButtons');
+SCENARIOS.forEach(s => {
+  const btn = document.createElement('button');
+  btn.style.cssText = 'margin-top:0; width:100%; text-align:left; display:flex; align-items:center; gap:10px; padding:8px 10px;';
+  btn.innerHTML = `<span style="font-family:var(--mono); color:var(--text-dim); font-size:11px; flex-shrink:0;">${s.n}.</span>
+    <span style="flex:1;">${s.label}</span>
+    <span style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.03em; flex-shrink:0;">${s.tag}</span>`;
+  btn.addEventListener('click', () => {
+    if (tensionDrive.checked) { tensionDrive.checked = false; }
+    applyTensionDrive();
+    a0Deg.value = s.x;
+    a1Deg.value = s.y;
+    render();
+  });
+  scenarioButtonsEl.appendChild(btn);
+  scenarioBtnEls.push(btn);
+});
+// Highlights whichever scenario button (if any) matches the sliders' CURRENT
+// values -- lets a demo confirm "yes, this is exactly scenario 5" rather
+// than eyeballing the slider position, and un-highlights the moment someone
+// nudges a slider away from an exact preset.
+function updateScenarioHighlight(d0, d1) {
+  SCENARIOS.forEach((s, i) => {
+    const active = Math.abs(d0 - s.x) < 0.5 && Math.abs(d1 - s.y) < 0.5;
+    scenarioBtnEls[i].style.borderColor = active ? '#a78bfa' : 'var(--border)';
+    scenarioBtnEls[i].style.color = active ? 'var(--text)' : 'var(--text-dim)';
+    scenarioBtnEls[i].style.background = active ? 'rgba(167,139,250,0.12)' : 'var(--panel-2)';
+  });
+}
+
 function render() {
   const d0 = parseFloat(a0Deg.value), d1 = parseFloat(a1Deg.value);
   a0Val.textContent = d0.toFixed(0) + '\u00b0';
   a1Val.textContent = d1.toFixed(0) + '\u00b0';
+  updateScenarioHighlight(d0, d1);
 
   const fs = parseFloat(fullScale.value);
   fsVal.textContent = fs + '°';
