@@ -1043,43 +1043,65 @@ function updateObstacleMeshVisual(phase) {
 
 // ---------- Power supply anchor + hanging supply cable (2026-08-09) ----------
 // Simple placeholder geometry, no CAD import -- a fixed external anchor the
-// gimbal's own cable drapes to. Placed at negative X and negative Z: the
-// rig marker and reel barrel are both at positive Z, so this sits off to
-// the side and away from the rig, reading as a distinct run rather than
-// overlapping either of them (same reasoning as the obstacle's placement
-// above, opposite corner of the scene from it so neither run crosses over
-// the other's anchor).
-const POWER_SUPPLY_BASE = new THREE.Vector3(-1.3, 0, -0.3);
+// gimbal's own cable drapes to. Two base positions, not one: NORMAL is the
+// resting scene (pure -Y/away-from-rig direction, no lateral offset -- the
+// rig marker and reel barrel are both at positive Z, so straight -Z reads
+// as a clean, distinct run). SNAG is swapped in for the whole duration of
+// the Obstacle Snag scenario (see updateHangingCable's `phase` argument
+// below) -- the "+X, -Y" quadrant, deliberately roughly in line with the
+// gimbal->obstacle direction so the cable's path naturally passes near the
+// obstacle without needing a separate detour calculation.
+const POWER_SUPPLY_BASE_NORMAL = new THREE.Vector3(0, 0, -1.4);
+const POWER_SUPPLY_BASE_SNAG = new THREE.Vector3(0.75, 0, -1.3);
 const POWER_SUPPLY_POLE_HEIGHT = 0.6;
+function powerSupplyAnchorFromBase(base) {
+  return base.clone().add(new THREE.Vector3(0, POWER_SUPPLY_POLE_HEIGHT - 0.06, 0));
+}
+const POWER_SUPPLY_ANCHOR_NORMAL = powerSupplyAnchorFromBase(POWER_SUPPLY_BASE_NORMAL);
+const POWER_SUPPLY_ANCHOR_SNAG = powerSupplyAnchorFromBase(POWER_SUPPLY_BASE_SNAG);
+
 const powerSupplyMat = new THREE.MeshStandardMaterial({ color: 0x2f3a4a, roughness: 0.7, metalness: 0.2 });
 const powerSupplyPole = new THREE.Mesh(new THREE.BoxGeometry(0.12, POWER_SUPPLY_POLE_HEIGHT, 0.12), powerSupplyMat);
-powerSupplyPole.position.copy(POWER_SUPPLY_BASE).setY(POWER_SUPPLY_POLE_HEIGHT / 2);
+powerSupplyPole.position.copy(POWER_SUPPLY_BASE_NORMAL).setY(POWER_SUPPLY_POLE_HEIGHT / 2);
 scene.add(powerSupplyPole);
 // Small standoff sphere marking exactly where the cable attaches, same
-// visual language as `hub` (the matching marker at the gimbal end).
-const POWER_SUPPLY_ANCHOR = POWER_SUPPLY_BASE.clone().add(new THREE.Vector3(0, POWER_SUPPLY_POLE_HEIGHT - 0.06, 0));
+// visual language as `hub` (the matching marker at the gimbal end). Both
+// this and the pole above are repositioned every frame in
+// updateHangingCable() based on whether the Obstacle Snag scenario is
+// currently running -- cheap (a Vector3 copy), so no separate
+// transition/edge-detection state is needed.
 const powerSupplyAnchorMesh = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 12), hubMat);
-powerSupplyAnchorMesh.position.copy(POWER_SUPPLY_ANCHOR);
+powerSupplyAnchorMesh.position.copy(POWER_SUPPLY_ANCHOR_NORMAL);
 scene.add(powerSupplyAnchorMesh);
 
 // Hanging cable curve: gimbal cable-exit point (`hub`, moves with
-// deflection) to POWER_SUPPLY_ANCHOR (fixed), sagging via a simple
-// shallow-sag parabolic approximation of a catenary rather than a rigorous
-// physical solve -- for a cable of length L strung between two points a
-// span d apart, midpoint sag h relates to the SLACK (L-d, the length
-// beyond a straight line) by L ~= d*(1 + 8(h/d)^2/3), i.e.
-// h ~= sqrt(3*d*(L-d)/8), the standard small-sag-ratio approximation
+// deflection) to whichever power-supply anchor is currently active,
+// sagging via a simple shallow-sag parabolic approximation of a catenary
+// rather than a rigorous physical solve -- for a cable of length L strung
+// between two points a span d apart, midpoint sag h relates to the SLACK
+// (L-d, the length beyond a straight line) by L ~= d*(1 + 8(h/d)^2/3),
+// i.e. h ~= sqrt(3*d*(L-d)/8), the standard small-sag-ratio approximation
 // (valid roughly while h/d stays well under ~0.3, which the constants
 // below keep it within). Slack is driven by the drum inertia model's live
 // payoutLength -- computed in stepReelTrim() below and passed in each
 // frame, not duplicated here -- so more paid-out cable produces more
 // visible droop and a fully-spooled drum (payoutLength=0) pulls this taut
-// (sagDepth=0 exactly, not just "less droopy").
+// (sagDepth=0 exactly, not just "less droopy"). This is also exactly what
+// gives the Obstacle Snag scenario its "wrapped tight, then goes loose as
+// the barrel unwinds" read for free: payoutLength starts at/near 0 when
+// the snag begins (taut), and only grows once the real control pipeline
+// commands UNREEL in response to the sustained catch deflection -- the
+// loosening is a genuine consequence of the drum spinning, not a scripted
+// override.
 const SUPPLY_CABLE_SLACK_PER_PAYOUT = 0.1;
 const SUPPLY_CABLE_MAX_SAG = 0.6;
 const SUPPLY_CABLE_RADIUS = 0.022;
 const SUPPLY_CABLE_TUBULAR_SEGMENTS = 24;
 const SUPPLY_CABLE_RADIAL_SEGMENTS = 6;
+// Vertical offset from the obstacle's center to the point the cable
+// "wraps" toward while caught -- keeps the tube draping just over the top
+// of the rock rather than rendering through its solid center.
+const OBSTACLE_WRAP_POINT_OFFSET = new THREE.Vector3(0, 0.14, 0);
 
 // Builds a tube BufferGeometry's static topology (index + uv buffers) ONCE,
 // with zeroed positions. updateHangingCable() below only ever rewrites the
@@ -1142,7 +1164,11 @@ const supplyCableMesh = new THREE.Mesh(supplyCableGeo, cableMat); // reuses the 
 scene.add(supplyCableMesh);
 // Reused every frame below to avoid a fresh Vector3 allocation per call.
 const _supplyCableStart = new THREE.Vector3();
-const _supplyCableMid = new THREE.Vector3();
+const _supplyCableChordMid = new THREE.Vector3();
+const _supplyCableSagPoint = new THREE.Vector3();
+const _supplyCableWrapPoint = new THREE.Vector3();
+const _supplyCableTargetMid = new THREE.Vector3();
+const _supplyCableControl = new THREE.Vector3();
 
 // Called from stepReelTrim() every frame, right after it computes the drum
 // model's current payoutLength -- so this always reflects both the LATEST
@@ -1150,18 +1176,55 @@ const _supplyCableMid = new THREE.Vector3();
 // render() call happened this frame: a slider drag, a preset click, the
 // Obstacle Snag scenario, or the drag-cable interaction) and the latest
 // spooled/paid-out state, with no separate/parallel deflection tracking.
-function updateHangingCable(payoutLength) {
+// `phase` is the Obstacle Snag scenario's current phase string (declared
+// further down; 'IDLE' when not running) and `wrapFactor` (0-1, also set
+// there) is how strongly the curve should bias toward the obstacle, e.g.
+// 1 while fully caught during HOLD, easing to 0 as it releases.
+function updateHangingCable(payoutLength, phase, wrapFactor) {
   scene.updateMatrixWorld(); // defensive -- cheap and idempotent if already current this frame
   hub.getWorldPosition(_supplyCableStart);
-  const d = _supplyCableStart.distanceTo(POWER_SUPPLY_ANCHOR);
+
+  // Whole scenario run (NEUTRAL through SETTLE, not just the catch itself)
+  // uses the SNAG position -- a single "scene switch" bracketing the run,
+  // rather than repositioning mid-scenario.
+  const snagging = phase !== 'IDLE';
+  const base = snagging ? POWER_SUPPLY_BASE_SNAG : POWER_SUPPLY_BASE_NORMAL;
+  const anchor = snagging ? POWER_SUPPLY_ANCHOR_SNAG : POWER_SUPPLY_ANCHOR_NORMAL;
+  powerSupplyPole.position.copy(base).setY(POWER_SUPPLY_POLE_HEIGHT / 2);
+  powerSupplyAnchorMesh.position.copy(anchor);
+
+  const d = _supplyCableStart.distanceTo(anchor);
   const slack = Math.max(0, SUPPLY_CABLE_SLACK_PER_PAYOUT * payoutLength);
   const sagDepth = Math.min(SUPPLY_CABLE_MAX_SAG, Math.sqrt(Math.max(0, 3 * d * slack / 8)));
-  _supplyCableMid.copy(_supplyCableStart).add(POWER_SUPPLY_ANCHOR).multiplyScalar(0.5);
-  _supplyCableMid.y -= sagDepth;
-  const curve = new THREE.QuadraticBezierCurve3(_supplyCableStart.clone(), _supplyCableMid.clone(), POWER_SUPPLY_ANCHOR.clone());
+
+  // Plain hanging-cable midpoint (straight-line chord, dipped down by sagDepth).
+  _supplyCableSagPoint.copy(_supplyCableStart).add(anchor).multiplyScalar(0.5);
+  _supplyCableSagPoint.y -= sagDepth;
+
+  // Blend toward a point just above the obstacle while wrapFactor > 0 --
+  // this is what makes the cable visually catch on it during CATCH/HOLD
+  // and peel back off it through RELEASE, independent of the sag/tension
+  // math above (which is driven purely by real payout, not this blend).
+  _supplyCableWrapPoint.copy(obstacleMesh.position).add(OBSTACLE_WRAP_POINT_OFFSET);
+  _supplyCableTargetMid.copy(_supplyCableSagPoint).lerp(_supplyCableWrapPoint, wrapFactor);
+
+  // Solve for the quadratic-bezier CONTROL point that makes the curve pass
+  // through _supplyCableTargetMid at its own midpoint parameter (t=0.5),
+  // rather than using the target directly as the control point -- a
+  // quadratic bezier's t=0.5 point is 0.25*P0 + 0.5*Pctrl + 0.25*P2 (pulled
+  // halfway back toward the start/end chord), so using the target as-is
+  // would only get the curve MOSTLY of the way to the obstacle, not onto
+  // it. Pctrl = 2*target - 0.5*(P0+P2) inverts that exactly.
+  _supplyCableChordMid.copy(_supplyCableStart).add(anchor).multiplyScalar(0.5);
+  _supplyCableControl.copy(_supplyCableTargetMid).multiplyScalar(2).sub(_supplyCableChordMid);
+
+  const curve = new THREE.QuadraticBezierCurve3(_supplyCableStart.clone(), _supplyCableControl.clone(), anchor.clone());
   updateTubeFromCurve(supplyCableGeo, curve, SUPPLY_CABLE_TUBULAR_SEGMENTS, SUPPLY_CABLE_RADIUS, SUPPLY_CABLE_RADIAL_SEGMENTS);
 }
-updateHangingCable(0); // initial paint (taut, zero payout at load) so the tube isn't a degenerate zeroed mesh before stepReelTrim's rAF loop runs its first frame
+// Literal 'IDLE'/0 here, not the snagPhase/cableWrapFactor variables -- those
+// are declared further down (in the Obstacle Snag scenario section) and
+// don't exist yet at this point in the script's first, synchronous pass.
+updateHangingCable(0, 'IDLE', 0); // initial paint (taut, zero payout, normal position) so the tube isn't a degenerate zeroed mesh before stepReelTrim's rAF loop runs its first frame
 
 // ---------- Reference axes (2026-07-24) ----------
 // Added because "left/right", "X-axis", "Y-axis", "forward/backward" were
@@ -1486,6 +1549,12 @@ const SNAG_OVERSHOOT_X = -8, SNAG_OVERSHOOT_Y = -12;
 let snagPhase = 'IDLE'; // IDLE | NEUTRAL | CATCH | HOLD | RELEASE | SETTLE
 let snagPhaseStartMs = 0;
 let snagTensionPct = 0;
+// 0-1: how strongly the hanging supply cable (see updateHangingCable above)
+// should bias its route toward the obstacle instead of its normal sag-dip
+// midpoint. Independent of snagTensionPct/payoutLength on purpose -- this
+// is a ROUTING concern (does the cable visually pass over the obstacle),
+// while the actual taut-vs-loose read comes from the real drum payout.
+let cableWrapFactor = 0;
 
 const obstacleSnagBtn = document.getElementById('obstacleSnagBtn');
 const snagA0ValEl = document.getElementById('snagA0Val');
@@ -1523,6 +1592,7 @@ obstacleSnagBtn.addEventListener('click', () => {
   snagPhase = 'NEUTRAL';
   snagPhaseStartMs = performance.now();
   snagTensionPct = 0;
+  cableWrapFactor = 0;
 });
 
 // Deterministic "organic" jitter for the HOLD phase: sum of two
@@ -1550,6 +1620,7 @@ function updateObstacleScenario(nowMs) {
 
   if (snagPhase === 'NEUTRAL') {
     x = 0; y = 0;
+    cableWrapFactor = 0; // power supply has already switched to the SNAG position (see updateHangingCable), but the cable itself isn't near the obstacle yet
     setSnagStateBox('FREE', 'cable hanging free, approaching obstacle', 'var(--border)', 'transparent');
     if (elapsedMs >= SNAG_PHASE_DURATION_MS.NEUTRAL) { snagPhase = 'CATCH'; snagPhaseStartMs = nowMs; }
 
@@ -1558,6 +1629,7 @@ function updateObstacleScenario(nowMs) {
     const eased = 1 - Math.pow(1 - t, 3); // fast snap, arrests into the catch point rather than accelerating smoothly
     x = SNAG_CATCH_X * eased;
     y = SNAG_CATCH_Y * eased;
+    cableWrapFactor = eased; // cable visually wraps onto the obstacle in sync with the gimbal snapping to the catch angle
     setSnagStateBox('CATCHING', 'cable snagging on obstacle', '#e0a83c', 'rgba(224,168,60,0.12)');
     if (t >= 1) { snagPhase = 'HOLD'; snagPhaseStartMs = nowMs; }
 
@@ -1565,6 +1637,7 @@ function updateObstacleScenario(nowMs) {
     const tSec = elapsedMs / 1000;
     x = SNAG_CATCH_X + snagJitter(tSec, 2.5);
     y = SNAG_CATCH_Y + snagJitter(tSec * 1.3, 3.5);
+    cableWrapFactor = 1; // fully wrapped/caught for the whole hold -- the taut-vs-loose read comes from real payoutLength (still ~0 early in HOLD), not from this
     snagTensionPct = Math.min(100, 100 * (elapsedMs / SNAG_PHASE_DURATION_MS.HOLD));
     setSnagStateBox('CAUGHT', `held, tension building (${snagTensionPct.toFixed(0)}%)`, 'var(--warn)', 'rgba(226,87,76,0.12)');
     // Release as soon as the tension proxy tops out, or after the phase's
@@ -1579,6 +1652,7 @@ function updateObstacleScenario(nowMs) {
     const eased = 1 - Math.pow(1 - t, 2); // snaps back faster than it settles, per the ask ("fast return... with a bit of overshoot")
     x = SNAG_CATCH_X + (SNAG_OVERSHOOT_X - SNAG_CATCH_X) * eased;
     y = SNAG_CATCH_Y + (SNAG_OVERSHOOT_Y - SNAG_CATCH_Y) * eased;
+    cableWrapFactor = 1 - eased; // peels back off the obstacle as it releases -- by now the drum has usually been unwinding for a while (real UNREEL fired during HOLD once contribution cleared the discard threshold), so unwrapping also reveals real accumulated slack
     snagTensionPct = Math.max(0, 100 * (1 - t));
     setSnagStateBox('RELEASING', 'obstacle let go, cable snapping back', 'var(--good)', 'rgba(79,191,122,0.12)');
     if (t >= 1) { snagPhase = 'SETTLE'; snagPhaseStartMs = nowMs; }
@@ -1588,6 +1662,7 @@ function updateObstacleScenario(nowMs) {
     const eased = 1 - Math.pow(1 - t, 3);
     x = SNAG_OVERSHOOT_X * (1 - eased);
     y = SNAG_OVERSHOOT_Y * (1 - eased);
+    cableWrapFactor = 0;
     snagTensionPct = 0;
     setSnagStateBox('SETTLING', 'returning to neutral', 'var(--border)', 'transparent');
     if (t >= 1) {
@@ -2221,7 +2296,7 @@ function stepReelTrim() {
   groundCable.scale.x = Math.max(0.001, payoutLength);
   groundCable.position.x = BARREL_POS.x + payoutLength / 2;
   payoutValEl.value = payoutLength.toFixed(2) + ' u';
-  updateHangingCable(payoutLength);
+  updateHangingCable(payoutLength, snagPhase, cableWrapFactor);
   const capacityPct = 100 * spooledLengthM / DRUM_L_MAX_M;
   const currentLayer = Math.floor(turnsRemaining / WRAPS_PER_LAYER);
 
