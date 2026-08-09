@@ -523,6 +523,35 @@ const PIVOT_Y = 0.75; // hoisted above the yoke-loading block below, which needs
 // as a hole's center (a shaft extends along a length and inserts partway;
 // its own midpoint doesn't have to coincide with where it seats). Flagged
 // for the user rather than silently accepted.
+//
+// inner_yoke.stl REPLACED (2026-08-09) with "BG02375111_A_1-Gimbal Inner
+// Yoke Concept 2" -- a different design, own native coordinate frame
+// (unrelated to the old part's numbers above, which are now historical --
+// they described a part no longer in this repo). Unlike every other pivot
+// derivation in this file, NO exact CAD coordinates were available for this
+// part -- INNER_YOKE_NATIVE_OFFSET below is a MESH-DERIVED ESTIMATE, found
+// by binary-parsing the STL and least-squares-fitting the two stub shafts'
+// circular cross-sections directly (not eyeballed): both stubs' (Y,Z) axis
+// agree to within 0.01in (Y=2.765, Z=11.09), a strong signal the fit is
+// real. The stub-to-stub X *span* is genuinely ambiguous, though, in the
+// same way the old inner_yoke's was (see above): the shaft is stepped/
+// shouldered (multiple diameters along its length -- tip flange, a
+// mid-shaft shoulder, a small relief groove where it meets the tube wall),
+// and nothing in the mesh says which diameter step is "the" mating
+// reference the way a CAD tool's own dimension would. The relief-groove
+// pair (X=-1.45 / 8.55, mutually consistent to 0.01in) gives a 10.0in span,
+// well short of outer_yoke's 12.00in hole span; the shoulder-cluster pair
+// (X=-3.4 / 10.5, also mutually consistent) gives 13.9in, slightly over.
+// Both pairs agree on the MIDPOINT (X=3.55) to within rounding, which is
+// what actually determines INNER_YOKE_NATIVE_OFFSET.x below -- the span
+// choice only affects how large the visual gap/overlap at each stub tip
+// is, not the part's overall placement. Rendered and checked (scripts/
+// render_combined.py-style, see renders/) before touching live JS: the
+// part sits centered and right-side-up inside outer_yoke's ring with a
+// plausible-looking per-side gap, smaller than the old inner_yoke's
+// documented 43mm residual. Flagged, not resolved -- ask whoever has the
+// source CAD tool for this part's exact stub-center coordinates (same as
+// every other part in this file) to replace this estimate.
 const IN_TO_M = 0.0254;
 const NATIVE_PIVOT = { x: 7.1061, y: 7.4432, z: 1.5000 };
 const FRAME_NATIVE_OFFSET = {
@@ -531,9 +560,9 @@ const FRAME_NATIVE_OFFSET = {
   z: 1.5000 - (-14.1875),
 };
 const INNER_YOKE_NATIVE_OFFSET = {
-  x: 7.1061 - (3.0700 + 18.4697) / 2,
-  y: 7.4432 - (-8.1604),
-  z: 1.5000 - 10.7500,
+  x: 7.1061 - (-1.45 + 8.55) / 2,
+  y: 7.4432 - 2.765,
+  z: 1.5000 - 11.09,
 };
 const stlLoader = new THREE.STLLoader();
 
@@ -748,41 +777,41 @@ const innerRing = makeQR24Disc(0.38, 0.045, 0xf0a24f);
 innerRing.rotation.y = Math.PI / 2;
 innerGroup.add(innerRing);
 const innerYokeMat = new THREE.MeshStandardMaterial({ color: 0xf0a24f, roughness: 0.45, metalness: 0.4 });
-// flip180Z turned OFF (2026-07-24): user asked to switch which male stub
-// mates into which female hole. Verified numerically against the exact CAD
-// coordinates before changing -- relative to the pivot, outer_yoke's female
-// holes sit at +-0.1524 and inner_yoke's male stubs at +-0.1956. With
-// flip180Z:true, stub_L (+0.1956) sat on the same side as hole_L (+0.1524);
-// with it off, stub_L lands at -0.1956, i.e. mating into hole_R instead --
-// exactly the requested swap. Checked that nothing else moves: the loaded
-// mesh's local X and Z bounding-box ranges are byte-identical either way
-// (Z still reaches -0.2731, matching CABLE_EXIT_OFFSET, so the hardcoded
-// cable/hub/dragHandle stay aligned with the real tube end); only Y shifts,
-// which is the swap itself.
+// flip180Z default (false) carried over unverified for the new inner_yoke
+// (2026-08-09 replacement) -- the reasoning below (2026-07-24) was derived
+// from the OLD part's exact CAD coordinates and no longer applies as
+// written; the new part's stub-to-hole handedness hasn't been checked
+// against a reference photo/CAD, so this is a starting guess, not a
+// confirmed choice. If the live sim shows the tube mirrored (mating into
+// the wrong side), flip this to true -- it's a pure left/right swap, same
+// mechanism as before, just with unverified correctness for this mesh.
+// Historical note (2026-07-24, old part): flip180Z was turned off after the
+// user asked to switch which male stub mates into which female hole,
+// verified against that part's exact CAD coordinates at the time.
 loadYokePart('../cad/inner_yoke.stl', innerGroup, { offset: INNER_YOKE_NATIVE_OFFSET, flip180Z: false, axis1Vertical: true, rotateY90: true, rotateX90: true }, innerYokeMat, innerRing);
 
-// Cable exit point (2026-07-24, updated same day for the rotateY90 whole-
-// assembly yaw above): the real inner_yoke tube's pivot connection sits at
+// Cable exit point: the real inner_yoke tube's pivot connection sits at
 // innerGroup's local origin by construction (that's where axis-1 attaches),
-// and the tube extends from there out to a fixed offset from the mesh
-// bounding box -- that far end is where the cable actually exits in real
-// life, NOT the origin. This matters because innerGroup rotates about local
-// Y (vertical, per axis1Vertical): a cable hanging from the origin sits
-// exactly ON that rotation axis and wouldn't move at all when the X slider
-// changes (like twirling a pendulum string along its own length -- the
-// weight at the bottom never swings). Anchoring at the real tube-end offset
-// fixes this: that point is off the rotation axis, so it correctly sweeps as
-// X changes. Originally measured as local X=+0.273 (inner_yoke mesh bounding
-// box, before rotateY90 existed); rotateY90 (Ry(90): x'=z, z'=-x) applied to
-// that same point gives local (0, y, -0.273) -- moved from the X axis to the
-// Z axis, same offset magnitude, consistent with every other part getting
-// the identical rotation.
-// After rotateX90 the tube points straight DOWN rather than horizontally
-// away from the rig, so the exit offset moved from local -Z to local -Y
-// (confirmed against the loaded mesh's bbox: Y now reaches -0.2731, exactly
-// the value Z used to reach). The cable hangs from that exit point, so its
-// own length is added below it rather than measured from the pivot.
-const CABLE_EXIT_OFFSET = 0.273;
+// and the tube extends from there out to a fixed offset -- that far end is
+// where the cable actually exits in real life, NOT the origin. This matters
+// because innerGroup rotates about a local axis through the origin: a cable
+// hanging from the origin sits exactly ON that rotation axis and wouldn't
+// move at all as the sliders change (like twirling a pendulum string along
+// its own length). Anchoring at the real tube-end offset fixes this.
+// CABLE_EXIT_OFFSET below is for the 2026-08-09 inner_yoke replacement,
+// re-derived the same way as the original (2026-07-24) value: found the new
+// mesh's hollow bottom-face centroid directly (native X=3.551, Y=2.319,
+// Z=0.0 -- confirmed hollow, 0 vertices near the centroid, i.e. a real
+// passthrough opening, not a solid plate), ran it through the same
+// transform pipeline as the mesh itself, and took the resulting distance
+// below the pivot (0.2817m, vs. the old part's 0.273m -- similar order of
+// magnitude, a reasonable cross-check). A small local-X residual (~0.011m)
+// came out of that calculation too, meaning the tube's bottom opening isn't
+// perfectly coaxial with the pivot line -- dropped here to keep the same
+// pure-Y convention the old value used (its own residual was small enough
+// to ignore the same way), rather than adding an X term nothing else in
+// this file expects.
+const CABLE_EXIT_OFFSET = 0.2817;
 const CABLE_LENGTH = 1.3;
 const cableMat = new THREE.MeshStandardMaterial({ color: 0xe6e8eb, roughness: 0.3, metalness: 0.1 });
 const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, CABLE_LENGTH, 12), cableMat);

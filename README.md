@@ -27,7 +27,7 @@ Full datasheet: `edb_1590914_eng_us.pdf` (see `dri` repo's `CLAUDE.md` for the r
 |---|---|---|
 | `mounting_frame.stl` | Base frame, bolts to the rig, carries the axis-0 bearing bosses | 17.3 × 21.4 × 20.8 |
 | `outer_yoke.stl` | Rectangular yoke ring — bosses on one side pair bolt to the frame (axis-0), the perpendicular pair carries the inner yoke (axis-1) | 17.0 × 20.9 × 4.1 |
-| `inner_yoke.stl` | Tube holding the encoder/cable passthrough, with two stub pivot shafts for the outer yoke's axis-1 bosses | 16.8 × 8.0 × 12.0 |
+| `inner_yoke.stl` | Tube holding the encoder/cable passthrough, with two stub pivot shafts for the outer yoke's axis-1 bosses. **Replaced 2026-08-09** — see below. | 15.9 × 6.1 × 12.0 |
 
 These are wired into `docs/gimbal_axis_simulator.html` (loaded live via `STLLoader`, not embedded — at ~1.8–4.7MB each, base64-embedding like the encoder experiment would have bloated the HTML past being readable/diffable, so the simulator now needs to be served rather than double-clicked; see below). The procedural placeholder frame/rings remain as a fallback if a load fails.
 
@@ -88,6 +88,16 @@ Verified before touching the live JS: both pivot axes still land on a single sha
 **Outer yoke turned right-side up: `rotateZ180` (2026-07-24).** With the ring horizontal, the model itself read upside down. Turning it over is a 180° rotation, and two of them do it — but they are **not** interchangeable here. `Rx(180)` (negates simY, simZ) would move axis-1's female holes from Z=−0.1524/+0.1524 to +0.1524/−0.1524, silently undoing the stub-to-hole pairing set by `flip180Z: false`. `Rz(180)` (negates simX, simY) leaves those holes exactly where they are — they sit at simX=simY=0, precisely the components it negates — and only mirrors axis-0's shafts along their own shared line. `Rz(180)` is therefore the correct choice; det=+1, applied last in sim space about the part's local origin. Verified after the change: axis-0 shafts still at X=±0.2474, axis-1 holes still at Z=∓0.1524 with the crossed pairing intact, the ring's Y range flipped, and Z unchanged so front/back orientation is preserved.
 
 > Gotcha for `scripts/render_combined.py`: `world_y` must be **0** for the outer/inner yoke, matching the live JS, where those parts are children of `outerGroup`/`innerGroup` and take their height from `outerGroup.position.y`. Baking `PIVOT_Y` in before `rotate_x90` lets that rotation drag the height into Z. This was harmless for `rotate_y90` (which leaves Y alone) but is not for `rotate_x90` — add the height *after* the transform.
+
+## inner_yoke.stl replaced with Concept 2 (2026-08-09)
+
+`cad/inner_yoke.stl` is now `BG02375111_A_1-Gimbal Inner Yoke Concept 2` — a different design from the part described in the pivot-alignment section above, on its own native coordinate frame unrelated to those numbers (kept above for history; they describe geometry no longer in this repo). Old size 16.8 × 8.0 × 12.0in; new part is 15.9 × 6.1 × 12.0in (same tube height, narrower footprint).
+
+**Unlike every other part in this file, no exact CAD coordinates were available for the new geometry** — the pivot alignment below is a **mesh-derived estimate**, not a CAD-tool readout. Method: binary-parsed the STL directly (struct/numpy, no CAD software involved) and least-squares circle-fit the two stub shafts' cross-sections. The shaft *axis* (Y=2.765in, Z=11.09in) is well-supported — both stubs agree to within 0.01in, and it independently cross-checks against the tube's own hollow bottom-face centroid (X=3.551in, matching the stub midpoint X=3.55in almost exactly). The stub-to-stub *span* is genuinely ambiguous, the same failure mode flagged for the old part above: the shaft is stepped (tip flange, mid-shaft shoulder, a relief groove at the tube wall), and the mesh doesn't say which diameter step is the intended mating reference. Two candidate feature-pairs gave 10.0in and 13.9in spans (target, from outer_yoke's unchanged holes: 12.00in); both agree on the midpoint (X=3.55in), which is what actually sets `INNER_YOKE_NATIVE_OFFSET.x` — so the span ambiguity affects the size of the visual gap at each stub tip, not the part's overall placement.
+
+Rendered and visually checked (`scripts/render_combined.py`, then live in the browser) before shipping: the new part sits centered, right-side-up, and correctly connected to the pivot inside outer_yoke's ring, with a visible per-side gap smaller than the old part's documented 43mm residual. Both sliders confirmed to still move it. `flip180Z` was left at its old default (`false`) — the old part's reasoning for that choice was specific to its own exact coordinates and doesn't carry over, so this is an unverified starting guess, not a confirmed one; if the live sim shows the part mirrored, flip it.
+
+**Open item:** ask whoever has the source CAD tool for this part's exact stub-center coordinates (same ask that was answered for the frame/outer_yoke/old inner_yoke) to replace this estimate with a real one.
 
 ## Duty cycle override, and a 5 HP hydraulic motor test case (2026-07-27)
 

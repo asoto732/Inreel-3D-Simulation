@@ -23,10 +23,18 @@ FRAME_NATIVE_OFFSET = np.array([
     ((-2.2958 + 17.1822) / 2) - ((-5.7665 + 13.2085) / 2),
     1.5000 - (-14.1875),
 ])
+# 2026-08-09: inner_yoke.stl replaced with "BG02375111_A_1-Gimbal Inner Yoke
+# Concept 2" -- own native frame, unrelated to the numbers above (kept for
+# history, describe a part no longer in this repo). No exact CAD coordinates
+# available for the new part; this offset is mesh-derived (STL binary-parsed,
+# stub shafts circle-fit directly) -- see the matching, more detailed comment
+# in gimbal_axis_simulator.html for the full derivation and its flagged
+# span ambiguity (~25mm/side estimated gap, ask for exact coordinates to
+# replace this).
 INNER_YOKE_OFFSET = np.array([
-    7.1061 - (3.0700 + 18.4697) / 2,
-    7.4432 - (-8.1604),
-    1.5000 - 10.7500,
+    7.1061 - (-1.45 + 8.55) / 2,
+    7.4432 - 2.765,
+    1.5000 - 11.09,
 ])
 PIVOT_Y = 0.75
 
