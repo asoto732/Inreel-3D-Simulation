@@ -700,8 +700,20 @@ function transformYokeGeometry(geo, { offset = { x: 0, y: 0, z: 0 }, worldY = 0,
   return geo;
 }
 
+// Cache-buster for the cad/*.stl fetches below. Browsers cache these
+// aggressively by URL with no help from the page's own reload/query-string
+// (Python's http.server sends no cache-control headers, so the browser's
+// heuristic cache can silently keep serving old STL bytes after the file on
+// disk has been replaced -- even a hard reload of the .html doesn't always
+// re-fetch a same-URL sub-resource). Bump this string any time a cad/*.stl
+// file is swapped, so the fetch URL actually changes and the browser can't
+// reuse a stale cached copy. (2026-08-09: bumped for the inner_yoke.stl
+// Concept 2 swap, after a stale-cache report -- old mesh + new transform
+// numbers rendered disconnected and floating outside the assembly.)
+const CAD_ASSET_VERSION = '2026-08-09';
+
 function loadYokePart(url, parent, transformOpts, material, fallback) {
-  stlLoader.load(url,
+  stlLoader.load(`${url}?v=${CAD_ASSET_VERSION}`,
     (geo) => {
       transformYokeGeometry(geo, transformOpts);
       parent.add(new THREE.Mesh(geo, material));
