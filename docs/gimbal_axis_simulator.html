@@ -63,9 +63,31 @@
   .tag { display: inline-block; font-size: 11px; font-family: var(--mono); padding: 2px 7px; border-radius: 5px; }
   .tag.in { background: rgba(79,191,122,0.15); color: var(--good); }
   .tag.out { background: rgba(226,87,76,0.15); color: var(--warn); }
+
+  .sticky-reel-badge {
+    position: fixed; top: 14px; right: 14px; z-index: 100;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px 6px 10px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    transition: border-color .1s, background .1s;
+    font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+  .sticky-reel-badge:hover { border-color: var(--text-dim); }
+  .sticky-reel-badge .dot { width: 9px; height: 9px; flex-shrink: 0; transition: background .05s, box-shadow .05s; }
+  .sticky-reel-badge .label { font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em; color: var(--text); white-space: nowrap; }
+  .sticky-reel-badge .duty { font-family: var(--mono); font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+  @media (max-width: 520px) {
+    .sticky-reel-badge { top: 8px; right: 8px; padding: 5px 10px 5px 8px; }
+    .sticky-reel-badge .duty { display: none; }
+  }
 </style>
 </head>
 <body>
+<div class="sticky-reel-badge" id="stickyReelBadge" title="Jump to reel trim output">
+  <span class="dot" id="stickyReelDot"></span>
+  <span class="label" id="stickyReelLabel">HOLD</span>
+  <span class="duty" id="stickyReelDuty">0%</span>
+</div>
 <div class="wrap">
   <h1>Gimbal axis simulator</h1>
   <p class="sub">
@@ -1492,6 +1514,19 @@ const rtCommand = document.getElementById('rtCommand');
 const reelState = document.getElementById('reelState');
 const reelStateText = document.getElementById('reelStateText');
 const reelStateSub = document.getElementById('reelStateSub');
+const stickyReelDot = document.getElementById('stickyReelDot');
+const stickyReelLabel = document.getElementById('stickyReelLabel');
+const stickyReelDuty = document.getElementById('stickyReelDuty');
+// Always-visible pinned readout of the same reel command shown in the full
+// "Reel trim output" panel further down -- that panel can scroll out of
+// view or sit inside a collapsed section, but the actual answer ("is the
+// reel doing anything right now") is the one thing worth never hiding.
+// Clicking it jumps to and opens the full panel for context.
+document.getElementById('stickyReelBadge').addEventListener('click', () => {
+  const panel = reelState.closest('details.axis-block');
+  if (panel && !panel.open) panel.open = true;
+  reelState.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
 const payoutValEl = document.getElementById('payoutVal');
 const maxPayoutInput = document.getElementById('maxPayout');
 
@@ -1616,6 +1651,12 @@ function stepReelTrim() {
     ? 'both outputs low, reel stationary'
     : `${dutyPercent.toFixed(0)}% duty, pulsing every ${PWM_PERIOD_MS} ms`;
   rtCommand.textContent = command;
+
+  stickyReelLabel.textContent = command;
+  stickyReelLabel.style.color = lit ? color : '#3a4552';
+  stickyReelDot.style.background = lit ? color : '#2a323d';
+  stickyReelDot.style.boxShadow = lit && command !== 'HOLD' ? `0 0 6px ${color}` : 'none';
+  stickyReelDuty.textContent = command === 'HOLD' ? '' : `${dutyPercent.toFixed(0)}%`;
 
   const unwindHigh = unwindOut && pwmHigh;
   const windHigh = windOut && pwmHigh;
