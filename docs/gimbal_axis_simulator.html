@@ -121,6 +121,47 @@
           from the rig, negative Y pulls it in toward the rig.
         </div>
         <div id="scenarioButtons" style="display:flex; flex-direction:column; gap:6px;"></div>
+
+        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+          <div class="axis-title" style="margin-bottom:8px;">
+            Obstacle snag <span class="adv-tag" style="margin-left:0;">scripted, ~8s</span>
+          </div>
+          <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+            Runs the full sensor-to-actuator chain end to end: the cable
+            catches on an obstacle mid-swing (visible in the 3D view as a
+            highlighted rock along the cable path), tension builds while
+            it's held, then it releases with a bit of overshoot before
+            settling. Drives the same a0Deg/a1Deg sliders the buttons above
+            do, one animated frame at a time -- every readout below comes
+            from the same encoder/deadzone/P-control/reel-trim pipeline,
+            nothing here is a parallel calculation.
+          </div>
+          <button id="obstacleSnagBtn" style="width:100%; margin-top:0;">&#9654; Start Obstacle Snag scenario</button>
+
+          <div class="two-col" style="margin-top:12px;">
+            <div class="field"><label style="margin:0">Axis 0 (X) encoder <span class="val" id="snagA0Val">0.0&deg;</span></label></div>
+            <div class="field"><label style="margin:0">Axis 1 (Y) encoder <span class="val" id="snagA1Val">0.0&deg;</span></label></div>
+          </div>
+          <div class="field">
+            <label style="margin:0">Fused deflection vector <span class="val" id="snagVectorVal">X 0 &middot; Y 0 &middot; contribution 0.000</span></label>
+          </div>
+          <div class="field">
+            <label>Tension proxy <span class="val" id="snagTensionVal">0%</span></label>
+            <div style="height:8px; border-radius:4px; background:var(--panel-2); overflow:hidden; margin-top:4px;">
+              <div id="snagTensionBar" style="height:100%; width:0%; background:var(--warn); transition:width .1s, background .1s;"></div>
+            </div>
+          </div>
+
+          <div id="snagState" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; transition:background .1s, border-color .1s;">
+            <div id="snagStateText" style="font-size:16px; font-weight:600; letter-spacing:0.05em; font-family:var(--mono);">FREE</div>
+            <div id="snagStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
+          </div>
+
+          <div style="margin-top:10px; text-align:center; border:1px solid var(--border); border-radius:8px; padding:10px;">
+            <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.03em; margin-bottom:4px;">Resulting reel command</div>
+            <div id="snagReelCommand" style="font-size:15px; font-weight:600; font-family:var(--mono); color:var(--text-dim);">HOLD</div>
+          </div>
+        </div>
       </details>
 
       <details class="axis-block" style="border-left-color:#4f8ff0;">
@@ -952,6 +993,49 @@ const groundCable = new THREE.Mesh(groundCableGeo, groundCableMat);
 groundCable.position.copy(BARREL_POS).setY(0.02);
 scene.add(groundCable);
 
+// ---------- Obstacle snag scenario: procedural obstacle mesh (2026-08-09) ----------
+// Simple placeholder geometry, no CAD import -- just a visual anchor for the
+// "Obstacle Snag" demo scenario further down, sitting along the cable's path
+// between the gimbal (pivot at world origin-ish, PIVOT_Y up) and the reel
+// barrel (BARREL_POS, world Z~1.05). Not dimensionally real, same spirit as
+// the frame/rig marker boxes above it.
+const obstacleGeo = new THREE.IcosahedronGeometry(0.12, 0);
+// Jagged-rock look: nudge each vertex in/out along its own direction from
+// the origin by a small deterministic amount (a fixed function of its index,
+// not Math.random()) so the shape is irregular but stays fixed -- computed
+// once here, not per-frame.
+{
+  const posAttr = obstacleGeo.attributes.position;
+  for (let i = 0; i < posAttr.count; i++) {
+    const v = new THREE.Vector3().fromBufferAttribute(posAttr, i);
+    const scale = 0.8 + 0.4 * Math.abs(Math.sin(i * 12.9898));
+    v.multiplyScalar(scale);
+    posAttr.setXYZ(i, v.x, v.y, v.z);
+  }
+  posAttr.needsUpdate = true;
+  obstacleGeo.computeVertexNormals();
+}
+const obstacleMat = new THREE.MeshStandardMaterial({ color: 0x5a6473, roughness: 0.8, metalness: 0.1 });
+const obstacleMesh = new THREE.Mesh(obstacleGeo, obstacleMat);
+// Off-axis in X (the catch is a lateral snag) and partway in Z between the
+// gimbal column (~0) and the barrel (BARREL_POS.z=1.05).
+obstacleMesh.position.set(0.22, 0.22, 0.55);
+scene.add(obstacleMesh);
+
+// Color/glow keyed to the same phase names the "Obstacle snag" readout
+// panel uses, so the 3D view and the on-screen state box always agree.
+const OBSTACLE_PHASE_COLOR = {
+  IDLE: 0x5a6473, NEUTRAL: 0x5a6473, CATCH: 0xe0a83c, HOLD: 0xe2574c,
+  RELEASE: 0x4fbf7a, SETTLE: 0x5a6473,
+};
+function updateObstacleMeshVisual(phase) {
+  const hex = OBSTACLE_PHASE_COLOR[phase] ?? 0x5a6473;
+  obstacleMat.color.setHex(hex);
+  const glow = phase === 'HOLD' ? 0.6 : (phase === 'CATCH' || phase === 'RELEASE') ? 0.3 : 0;
+  obstacleMat.emissive.setHex(glow > 0 ? hex : 0x000000);
+  obstacleMat.emissiveIntensity = glow;
+}
+
 // ---------- Reference axes (2026-07-24) ----------
 // Added because "left/right", "X-axis", "Y-axis", "forward/backward" were
 // being used to mean different things in conversation. These are WORLD axes
@@ -1241,6 +1325,160 @@ function updateScenarioHighlight(d0, d1) {
     scenarioBtnEls[i].style.color = active ? 'var(--text)' : 'var(--text-dim)';
     scenarioBtnEls[i].style.background = active ? 'rgba(167,139,250,0.12)' : 'var(--panel-2)';
   });
+}
+
+// ---------- Demo scenario: Obstacle Snag ----------
+// A scripted multi-phase deflection timeline, demonstrating the full
+// sensor (encoder angle) -> control (deadzone/P-control/EMA ramp) ->
+// actuator (reel/unreel duty) chain in one run. Deliberately drives
+// a0Deg/a1Deg the exact same way the five instant-preset buttons above do
+// (set .value, call render()) rather than a parallel calculation -- that
+// means it automatically goes through computeAxis()'s real deadzone math
+// and the sliders' native min/max (a0Deg is -45..45 in the DOM, so setting
+// .value past that is silently clamped by the browser itself, the same
+// mechanical hard stop every other control in this file respects).
+const SNAG_PHASE_DURATION_MS = {
+  NEUTRAL: 2500, CATCH: 400, HOLD: 3500, RELEASE: 700, SETTLE: 1800,
+};
+// Catch point: a lateral (X) snag combined with a Y pull, both comfortably
+// clear of their default deadzones (X's is +-4.5deg, Y's +-15.75deg at the
+// 45deg full-scale default) so the demo reliably shows a live reel command
+// during HOLD, not a silent in-deadzone read. X stays short of the +-45deg
+// hard stop on purpose -- scenarios 1/2 above already demo hitting that
+// limit deliberately; this one is an incidental snag, not a deliberate pull
+// to the limit.
+const SNAG_CATCH_X = 38, SNAG_CATCH_Y = 42;
+// Release overshoot: swings a bit PAST neutral before settling, same
+// direction bias as a cable recoiling once whatever caught it lets go.
+// Deliberately modest ("a bit of overshoot", not a second snag) -- small
+// enough that it may or may not clear the deadzone on its own, which is
+// itself a fair thing for this demo to show (the control pipeline ignoring
+// a small transient rather than chattering the reel motor on every wobble).
+const SNAG_OVERSHOOT_X = -8, SNAG_OVERSHOOT_Y = -12;
+
+let snagPhase = 'IDLE'; // IDLE | NEUTRAL | CATCH | HOLD | RELEASE | SETTLE
+let snagPhaseStartMs = 0;
+let snagTensionPct = 0;
+
+const obstacleSnagBtn = document.getElementById('obstacleSnagBtn');
+const snagA0ValEl = document.getElementById('snagA0Val');
+const snagA1ValEl = document.getElementById('snagA1Val');
+const snagVectorValEl = document.getElementById('snagVectorVal');
+const snagTensionValEl = document.getElementById('snagTensionVal');
+const snagTensionBarEl = document.getElementById('snagTensionBar');
+const snagStateEl = document.getElementById('snagState');
+const snagStateTextEl = document.getElementById('snagStateText');
+const snagStateSubEl = document.getElementById('snagStateSub');
+const snagReelCommandEl = document.getElementById('snagReelCommand');
+
+// Buttons disabled for the run's duration: the five instant presets would
+// otherwise fight the scenario's own per-frame slider writes (each preset
+// click sets a0Deg/a1Deg once; this scenario overwrites them every frame
+// while active, so a mid-run preset click would just get stomped on the
+// next frame anyway -- disabling makes that visible instead of silently
+// doing nothing).
+function setScenarioControlsEnabled(enabled) {
+  scenarioBtnEls.forEach(b => b.disabled = !enabled);
+  obstacleSnagBtn.disabled = !enabled;
+  a0Deg.disabled = !enabled;
+  a1Deg.disabled = !enabled ? true : tensionDrive.checked; // a1Deg's disabled state is otherwise owned by tensionDrive
+}
+
+obstacleSnagBtn.addEventListener('click', () => {
+  if (snagPhase !== 'IDLE') return;
+  // Tension-driven Y can only ever produce a POSITIVE (away-from-rig)
+  // angle (see applyTensionDrive below) -- this scenario needs full manual
+  // control of both axes for its own timeline, same reason the demo
+  // scenarios above turn it off first.
+  if (tensionDrive.checked) { tensionDrive.checked = false; applyTensionDrive(); }
+  setScenarioControlsEnabled(false);
+  obstacleSnagBtn.textContent = '▶ Running…';
+  snagPhase = 'NEUTRAL';
+  snagPhaseStartMs = performance.now();
+  snagTensionPct = 0;
+});
+
+// Deterministic "organic" jitter for the HOLD phase: sum of two
+// incommensurate sine waves rather than Math.random(), so it's smooth
+// frame to frame (no discontinuities) and reproducible run to run.
+function snagJitter(tSec, amplitude) {
+  return amplitude * (Math.sin(tSec * 6.1) * 0.6 + Math.sin(tSec * 13.7) * 0.4);
+}
+
+function setSnagStateBox(text, sub, color, bg) {
+  snagStateTextEl.textContent = text;
+  snagStateSubEl.textContent = sub;
+  snagStateEl.style.borderColor = color;
+  snagStateEl.style.background = bg;
+}
+
+// Runs once per animation frame from stepReelTrim(), BEFORE it reads
+// currentVX/currentVY, so whatever this sets a0Deg/a1Deg to feeds through
+// the real computeAxis()/reel-trim pipeline on the SAME frame, exactly like
+// a user's own slider drag would -- no separate/parallel math.
+function updateObstacleScenario(nowMs) {
+  if (snagPhase === 'IDLE') return;
+  const elapsedMs = nowMs - snagPhaseStartMs;
+  let x = 0, y = 0;
+
+  if (snagPhase === 'NEUTRAL') {
+    x = 0; y = 0;
+    setSnagStateBox('FREE', 'cable hanging free, approaching obstacle', 'var(--border)', 'transparent');
+    if (elapsedMs >= SNAG_PHASE_DURATION_MS.NEUTRAL) { snagPhase = 'CATCH'; snagPhaseStartMs = nowMs; }
+
+  } else if (snagPhase === 'CATCH') {
+    const t = Math.min(1, elapsedMs / SNAG_PHASE_DURATION_MS.CATCH);
+    const eased = 1 - Math.pow(1 - t, 3); // fast snap, arrests into the catch point rather than accelerating smoothly
+    x = SNAG_CATCH_X * eased;
+    y = SNAG_CATCH_Y * eased;
+    setSnagStateBox('CATCHING', 'cable snagging on obstacle', '#e0a83c', 'rgba(224,168,60,0.12)');
+    if (t >= 1) { snagPhase = 'HOLD'; snagPhaseStartMs = nowMs; }
+
+  } else if (snagPhase === 'HOLD') {
+    const tSec = elapsedMs / 1000;
+    x = SNAG_CATCH_X + snagJitter(tSec, 2.5);
+    y = SNAG_CATCH_Y + snagJitter(tSec * 1.3, 3.5);
+    snagTensionPct = Math.min(100, 100 * (elapsedMs / SNAG_PHASE_DURATION_MS.HOLD));
+    setSnagStateBox('CAUGHT', `held, tension building (${snagTensionPct.toFixed(0)}%)`, 'var(--warn)', 'rgba(226,87,76,0.12)');
+    // Release as soon as the tension proxy tops out, or after the phase's
+    // max duration, whichever comes first -- so the demo never hangs even
+    // if the tension math above were changed later.
+    if (snagTensionPct >= 100 || elapsedMs >= SNAG_PHASE_DURATION_MS.HOLD) {
+      snagPhase = 'RELEASE'; snagPhaseStartMs = nowMs;
+    }
+
+  } else if (snagPhase === 'RELEASE') {
+    const t = Math.min(1, elapsedMs / SNAG_PHASE_DURATION_MS.RELEASE);
+    const eased = 1 - Math.pow(1 - t, 2); // snaps back faster than it settles, per the ask ("fast return... with a bit of overshoot")
+    x = SNAG_CATCH_X + (SNAG_OVERSHOOT_X - SNAG_CATCH_X) * eased;
+    y = SNAG_CATCH_Y + (SNAG_OVERSHOOT_Y - SNAG_CATCH_Y) * eased;
+    snagTensionPct = Math.max(0, 100 * (1 - t));
+    setSnagStateBox('RELEASING', 'obstacle let go, cable snapping back', 'var(--good)', 'rgba(79,191,122,0.12)');
+    if (t >= 1) { snagPhase = 'SETTLE'; snagPhaseStartMs = nowMs; }
+
+  } else if (snagPhase === 'SETTLE') {
+    const t = Math.min(1, elapsedMs / SNAG_PHASE_DURATION_MS.SETTLE);
+    const eased = 1 - Math.pow(1 - t, 3);
+    x = SNAG_OVERSHOOT_X * (1 - eased);
+    y = SNAG_OVERSHOOT_Y * (1 - eased);
+    snagTensionPct = 0;
+    setSnagStateBox('SETTLING', 'returning to neutral', 'var(--border)', 'transparent');
+    if (t >= 1) {
+      x = 0; y = 0;
+      snagPhase = 'IDLE';
+      obstacleSnagBtn.textContent = '▶ Start Obstacle Snag scenario';
+      setScenarioControlsEnabled(true);
+      setSnagStateBox('FREE', 'not running', 'var(--border)', 'transparent');
+    }
+  }
+
+  a0Deg.value = x;
+  a1Deg.value = y;
+  render();
+
+  snagTensionValEl.textContent = snagTensionPct.toFixed(0) + '%';
+  snagTensionBarEl.style.width = snagTensionPct + '%';
+  updateObstacleMeshVisual(snagPhase);
 }
 
 function render() {
@@ -1645,6 +1883,12 @@ render = function () {
 render();
 
 function stepReelTrim() {
+  // Advance the Obstacle Snag scenario (if running) first: it sets a0Deg/
+  // a1Deg.value and calls render() itself when active, so currentVX/
+  // currentVY below are already this frame's values by the time they're
+  // read, exactly as if a user had just dragged a slider.
+  updateObstacleScenario(performance.now());
+
   // Read live from the tuning panel rather than the CONTRIB_X/CONTRIB_Y/DISCARD
   // constants, which now serve only as the documented firmware defaults.
   const cx = parseFloat(contribXInput.value), cy = parseFloat(contribYInput.value);
@@ -1710,6 +1954,16 @@ function stepReelTrim() {
     ? 'both outputs low, reel stationary'
     : `${dutyPercent.toFixed(0)}% duty, pulsing every ${PWM_PERIOD_MS} ms`;
   rtCommand.textContent = command;
+
+  // Obstacle-snag readout panel: always live, not just while that scenario
+  // is running -- these are the exact same command/contribution/currentVX/
+  // currentVY values just computed above for the main reel-trim output, so
+  // dragging the sliders by hand shows the identical chain here too.
+  snagA0ValEl.textContent = parseFloat(a0Deg.value).toFixed(1) + '°';
+  snagA1ValEl.textContent = parseFloat(a1Deg.value).toFixed(1) + '°';
+  snagVectorValEl.textContent = `X ${currentVX} · Y ${currentVY} · contribution ${contribution.toFixed(3)}`;
+  snagReelCommandEl.textContent = command;
+  snagReelCommandEl.style.color = lit ? color : 'var(--text-dim)';
 
   stickyReelLabel.textContent = command;
   stickyReelLabel.style.color = lit ? color : '#3a4552';
