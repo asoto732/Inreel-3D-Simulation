@@ -1348,8 +1348,20 @@ scene.add(powerSupplyAnchorMesh);
 // commands UNREEL in response to the sustained catch deflection -- the
 // loosening is a genuine consequence of the drum spinning, not a scripted
 // override.
-const SUPPLY_CABLE_SLACK_PER_PAYOUT = 0.1;
-const SUPPLY_CABLE_MAX_SAG = 0.6;
+// Bumped 0.1->0.18 and 0.6->0.7 (2026-08-09): the sag-vs-slack relationship
+// above is a SQUARE ROOT (h ~ sqrt(slack)), so the old 0.1 slack factor
+// meant a lot of payout was needed before the droop read as more than
+// subtle -- and the old 0.6 cap was already the binding constraint at
+// realistic payout/low-tension combinations, so raising slack alone
+// wouldn't have shown much without also raising the ceiling it was hitting.
+const SUPPLY_CABLE_SLACK_PER_PAYOUT = 0.18;
+const SUPPLY_CABLE_MAX_SAG = 0.7;
+// Minimum world Y the sag point is allowed to dip to -- see its own use
+// site below for why this exists (a floor for the low-tension/high-payout
+// corner the raw sag formula can otherwise overshoot the exit/anchor
+// heights on). Small but nonzero, matching the ground-decal-style margin
+// used elsewhere in this file (e.g. the drill hole markers sit at 0.006).
+const SUPPLY_CABLE_GROUND_CLEARANCE = 0.05;
 const SUPPLY_CABLE_RADIUS = 0.022;
 // ---------- Tension-driven sag stiffness + feed marks (2026-08-09) ----------
 // Live here (not down with the rest of the tension/whip state near
@@ -1556,6 +1568,14 @@ function updateHangingCable(payoutLength, phase, wrapFactor, tensionPct, whipDis
   // overshooting, not an unrelated wobble.
   _supplyCableSagPoint.copy(_supplyCableStart).add(anchor).multiplyScalar(0.5);
   _supplyCableSagPoint.y -= sagDepth + whipDisp;
+  // Ground clearance floor: at low tension + a large payout the raw formula
+  // above can ask for more droop than the exit/anchor heights have room
+  // for, which without this would dip the midpoint below y=0 and read as
+  // the cable clipping through the floor. Clamping the SAG POINT (not
+  // sagDepth itself) keeps the deep-sag look everywhere there's actually
+  // room for it, only intervening in that specific low-tension/high-payout
+  // corner instead of flattening the curve everywhere.
+  _supplyCableSagPoint.y = Math.max(SUPPLY_CABLE_GROUND_CLEARANCE, _supplyCableSagPoint.y);
 
   // Blend toward a point just above the obstacle while wrapFactor > 0 --
   // this is what makes the cable visually catch on it during CATCH/HOLD
@@ -1573,6 +1593,18 @@ function updateHangingCable(payoutLength, phase, wrapFactor, tensionPct, whipDis
   // it. Pctrl = 2*target - 0.5*(P0+P2) inverts that exactly.
   _supplyCableChordMid.copy(_supplyCableStart).add(anchor).multiplyScalar(0.5);
   _supplyCableControl.copy(_supplyCableTargetMid).multiplyScalar(2).sub(_supplyCableChordMid);
+  // The control point extrapolates roughly 2x as far below the target as
+  // the target itself dips below the chord (by construction, just above),
+  // so when the exit/anchor heights are asymmetric (hub and anchor rarely
+  // sit at the same Y), the curve's TRUE lowest point can dip well below
+  // both _supplyCableSagPoint's own clamp above AND y=0, even though that
+  // clamp only checked the t=0.5 sample. A quadratic bezier is a convex
+  // combination of its three control points at every t, so clamping EVERY
+  // one of them (P0=anchor, Pctrl here, P2=hub -- the endpoints are real
+  // attachment points and are essentially always already above this, so
+  // this only ever actually bites on the control point) to the same floor
+  // guarantees the whole curve stays above it, not just one sample point.
+  _supplyCableControl.y = Math.max(SUPPLY_CABLE_GROUND_CLEARANCE, _supplyCableControl.y);
 
   // Segment A (power supply -> gimbal exit): the sag curve above, point
   // order reversed from the old single-segment version (anchor is now the
