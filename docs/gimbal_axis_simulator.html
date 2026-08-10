@@ -1049,7 +1049,12 @@ innerGroup.add(dragHandle);
 
 // ---------- Reel barrel and cable laid on the ground ----------
 const BARREL_POS = new THREE.Vector3(0, 0.35, 1.05);
-const barrelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.55, 24);
+// Named (rather than left as literals in the geometry call below) because
+// the barrel-wind helix further down needs both: it derives its radius and
+// axial span from these SAME numbers, not independent guesses.
+const BARREL_RADIUS = 0.35;
+const BARREL_LENGTH = 0.55;
+const barrelGeo = new THREE.CylinderGeometry(BARREL_RADIUS, BARREL_RADIUS, BARREL_LENGTH, 24);
 barrelGeo.rotateZ(Math.PI / 2); // bake the drum axis onto local X, so spin is a clean single-axis rotation
 const barrelMat = new THREE.MeshStandardMaterial({ color: 0x5a6473, roughness: 0.5, metalness: 0.5 });
 const barrel = new THREE.Mesh(barrelGeo, barrelMat);
@@ -1069,6 +1074,21 @@ const groundCableGeo = new THREE.BoxGeometry(1, 0.035, 0.07);
 const groundCable = new THREE.Mesh(groundCableGeo, groundCableMat);
 groundCable.position.copy(BARREL_POS).setY(0.02);
 scene.add(groundCable);
+
+// ---------- Cable mounting/guide point near the barrel (2026-08-09) ----------
+// Fixed anchor the cable passes through on its way from the gimbal to the
+// drum -- a cable guide/fairlead, simple placeholder geometry (a torus, no
+// CAD import), same spirit as the obstacle rock and power-supply pole
+// further down. Geometrically fixed relative to the barrel HOUSING: defined
+// directly off BARREL_POS/BARREL_RADIUS, never off gimbal deflection --
+// see updateHangingCable()'s gimbal->mount vs mount->barrel segments below,
+// which is what that distinction is actually for.
+const MOUNTING_ANCHOR = new THREE.Vector3(BARREL_POS.x, BARREL_POS.y + BARREL_RADIUS + 0.2, BARREL_POS.z - 0.5);
+const mountingGuideMat = new THREE.MeshStandardMaterial({ color: 0x5a6473, roughness: 0.5, metalness: 0.5 });
+const mountingGuideMesh = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.015, 8, 16), mountingGuideMat);
+mountingGuideMesh.position.copy(MOUNTING_ANCHOR);
+mountingGuideMesh.rotation.x = Math.PI / 2;
+scene.add(mountingGuideMesh);
 
 // ---------- Obstacle snag scenario: procedural obstacle mesh (2026-08-09) ----------
 // Simple placeholder geometry, no CAD import -- just a visual anchor for the
@@ -1173,7 +1193,14 @@ scene.add(powerSupplyAnchorMesh);
 const SUPPLY_CABLE_SLACK_PER_PAYOUT = 0.1;
 const SUPPLY_CABLE_MAX_SAG = 0.6;
 const SUPPLY_CABLE_RADIUS = 0.022;
-const SUPPLY_CABLE_TUBULAR_SEGMENTS = 24;
+// Bumped from 24 (2026-08-09): the tube now spans the full power-supply ->
+// gimbal -> mounting -> barrel-spiral path, not just the short sag segment,
+// and the spiral alone can be tens of scene-units of arc length once mostly
+// wound -- needs real per-turn resolution to read as helical rather than
+// faceted. THREE.CurvePath distributes these proportionally by arc length
+// across all four sub-curves, so the spiral (by far the longest segment
+// once any real amount is wound) gets the vast majority of them for free.
+const SUPPLY_CABLE_TUBULAR_SEGMENTS = 300;
 const SUPPLY_CABLE_RADIAL_SEGMENTS = 6;
 // Vertical offset from the obstacle's center to the point the cable
 // "wraps" toward while caught -- keeps the tube draping just over the top
@@ -1246,6 +1273,7 @@ const _supplyCableSagPoint = new THREE.Vector3();
 const _supplyCableWrapPoint = new THREE.Vector3();
 const _supplyCableTargetMid = new THREE.Vector3();
 const _supplyCableControl = new THREE.Vector3();
+const _supplyCableTangent = new THREE.Vector3();
 
 // Called from stepReelTrim() every frame, right after it computes the drum
 // model's current payoutLength -- so this always reflects both the LATEST
@@ -1305,13 +1333,57 @@ function updateHangingCable(payoutLength, phase, wrapFactor) {
   _supplyCableChordMid.copy(_supplyCableStart).add(anchor).multiplyScalar(0.5);
   _supplyCableControl.copy(_supplyCableTargetMid).multiplyScalar(2).sub(_supplyCableChordMid);
 
-  const curve = new THREE.QuadraticBezierCurve3(_supplyCableStart.clone(), _supplyCableControl.clone(), anchor.clone());
-  updateTubeFromCurve(supplyCableGeo, curve, SUPPLY_CABLE_TUBULAR_SEGMENTS, SUPPLY_CABLE_RADIUS, SUPPLY_CABLE_RADIAL_SEGMENTS);
+  // Segment A (power supply -> gimbal exit): the sag curve above, point
+  // order reversed from the old single-segment version (anchor is now the
+  // PATH's start, hub/_supplyCableStart is where it hands off to segment B)
+  // so the whole thing chains into one continuous path in the order
+  // requirement 1 describes: power supply -> gimbal -> mounting -> barrel.
+  const sagCurve = new THREE.QuadraticBezierCurve3(anchor.clone(), _supplyCableControl.clone(), _supplyCableStart.clone());
+
+  // Wound/free split (2026-08-09): driven ENTIRELY by the same payoutLength
+  // / maxPayoutVal the drum inertia model already computes below -- no
+  // independent length source. payoutLength keeps meaning exactly what it
+  // always has (the free/sagging length, unchanged above), and woundFraction
+  // is simply its complement against the same total (maxPayoutVal), so
+  // "total cable length constant, wound = total - free" falls out for free
+  // rather than needing a separate invented constant.
+  const maxPayoutVal = parseFloat(maxPayoutInput.value) || 2.5;
+  const woundFraction = Math.max(0, Math.min(1, 1 - payoutLength / maxPayoutVal));
+  // Single-layer visual clamp (per the "no multi-layer" scope above): turns
+  // scale with the SAME woundFraction the length split uses, capped at one
+  // layer's worth (WRAPS_PER_LAYER) -- rather than clamping the real
+  // (possibly multi-layer) turnsRemaining directly, which would leave the
+  // spiral looking permanently "full" for the first half of any unwind
+  // starting from a mostly-full drum. This way the spiral's fullness and
+  // the free segment's slack always move together, even though the real
+  // drum can hold more than one layer.
+  const woundTurns = woundFraction * WRAPS_PER_LAYER;
+
+  // t=0 is the ACTIVE end of the coil (the current outermost wrap, where
+  // free cable actually enters/exits) -- see BarrelHelixCurve's own comment
+  // for why that's t=0 and not t=1.
+  const helixCurve = new BarrelHelixCurve(woundTurns, barrel.rotation.x);
+  helixCurve.getPoint(0, _supplyCableTangent);
+
+  // Segment B (gimbal exit -> mounting anchor): bends with gimbal
+  // deflection for free, because _supplyCableStart (hub's world position)
+  // moves every frame -- MOUNTING_ANCHOR itself never does.
+  const gimbalToMountCurve = new THREE.LineCurve3(_supplyCableStart.clone(), MOUNTING_ANCHOR.clone());
+  // Segment C (mounting anchor -> current end of the wound coil): fixed
+  // relative to the barrel HOUSING -- both endpoints derive from
+  // MOUNTING_ANCHOR (fixed) and the helix (barrel-side state only), never
+  // from gimbal deflection. Ends exactly at the helix's own t=0 point, so
+  // there's no seam between the straight segment and the spiral (req. 5).
+  const mountToBarrelCurve = new THREE.LineCurve3(MOUNTING_ANCHOR.clone(), _supplyCableTangent.clone());
+
+  const fullPath = new THREE.CurvePath();
+  fullPath.add(sagCurve);
+  fullPath.add(gimbalToMountCurve);
+  fullPath.add(mountToBarrelCurve);
+  fullPath.add(helixCurve);
+
+  updateTubeFromCurve(supplyCableGeo, fullPath, SUPPLY_CABLE_TUBULAR_SEGMENTS, SUPPLY_CABLE_RADIUS, SUPPLY_CABLE_RADIAL_SEGMENTS);
 }
-// Literal 'IDLE'/0 here, not the snagPhase/cableWrapFactor variables -- those
-// are declared further down (in the Obstacle Snag scenario section) and
-// don't exist yet at this point in the script's first, synchronous pass.
-updateHangingCable(0, 'IDLE', 0); // initial paint (taut, zero payout, normal position) so the tube isn't a degenerate zeroed mesh before stepReelTrim's rAF loop runs its first frame
 
 // ---------- Reference axes (2026-07-24) ----------
 // Added because "left/right", "X-axis", "Y-axis", "forward/backward" were
@@ -1879,6 +1951,61 @@ const DRUM_L_MAX_M = 359.4;             // max cable length this drum holds, fro
 // of inertia.
 const WRAPS_PER_LAYER = Math.floor(DRUM_WIDTH_M / CABLE_OD_M); // ~34, width / cable OD
 
+// ---------- Single-layer helix wind on the barrel (2026-08-09) ----------
+// Placed here, not up near the rest of the cable/barrel scene setup, because
+// it needs CABLE_OD_M/DRUM_WIDTH_M/WRAPS_PER_LAYER above, which don't exist
+// yet at that earlier point in the script -- updateHangingCable() (defined
+// earlier) only actually CALLS BarrelHelixCurve from inside stepReelTrim(),
+// well after this whole script has run once, so the later declaration here
+// is fine (same late-binding this file already relies on for snagPhase
+// etc.), it just has to come before stepReelTrim ever fires.
+//
+// Pitch (axial advance per turn) derives from CABLE_OD_M -- already the
+// Nexans 36-517-002 spec used throughout this section, 0.053848m = 2.12in,
+// exactly the "reasonable default" cable diameter the pitch should be based
+// on -- scaled into scene units via the barrel MESH's own established
+// real-to-scene ratio: its rendered length (BARREL_LENGTH, 0.55 scene
+// units) represents the real DRUM_WIDTH_M (1.83515m). Cross-check: dividing
+// BARREL_LENGTH by this pitch gives ~34.1, matching WRAPS_PER_LAYER (34)
+// almost exactly -- confirms the scaling is consistent with the real
+// wrap-layer model already in this file, not an independently-chosen number.
+const CABLE_DIAMETER_IN = 2.12; // exposed per the ask; equals CABLE_OD_M's own real-world value (0.053848m), just named for where it's actually used below
+const HELIX_PITCH_SCENE = CABLE_OD_M * (BARREL_LENGTH / DRUM_WIDTH_M);
+const HELIX_RADIUS = BARREL_RADIUS + SUPPLY_CABLE_RADIUS; // cable tube sits just outside the drum's own surface, not intersecting it
+const HELIX_START_X = BARREL_POS.x - BARREL_LENGTH / 2; // where turn=0 (the fixed, buried clamp point) sits
+
+// Parametric helix, in WORLD space. t=0 is deliberately the ACTIVE/outermost
+// wrap (turn=this.turns) and t=1 the fixed clamp point (turn=0) -- backwards
+// from the "obvious" turn=0-at-t=0 mapping -- because the free cable segment
+// needs to connect to the CURRENT end of the coil (where cable actually
+// enters/exits as it winds), not the buried origin point, and CurvePath
+// chains sub-curves start-to-end: putting the active end at t=0 means
+// segment C (mounting -> barrel) can end exactly at helixCurve.getPoint(0)
+// with no seam, ever (requirement 5).
+// `rotationOffset` is barrel.rotation.x at generation time -- the SAME
+// value stepReelTrim() already updates from drumOmega each frame (see
+// "barrel.rotation.x -= drumOmega * dt" below) -- read here, not
+// duplicated, so the wound coil visually spins WITH the barrel mesh for
+// free, in the correct direction, without needing to parent this geometry
+// to the barrel (which a single free+wound tube can't do anyway, since
+// only PART of it should rotate with the drum).
+class BarrelHelixCurve extends THREE.Curve {
+  constructor(turns, rotationOffset) {
+    super();
+    this.turns = Math.max(0.001, turns); // never exactly 0 -- avoids a degenerate zero-length sub-curve when nothing is wound
+    this.rotationOffset = rotationOffset;
+  }
+  getPoint(t, target = new THREE.Vector3()) {
+    const u = (1 - t) * this.turns;
+    const angle = u * Math.PI * 2 + this.rotationOffset;
+    return target.set(
+      HELIX_START_X + u * HELIX_PITCH_SCENE,
+      BARREL_POS.y + HELIX_RADIUS * Math.cos(angle),
+      BARREL_POS.z + HELIX_RADIUS * Math.sin(angle)
+    );
+  }
+}
+
 // Radius of the cable's center on a given (0-indexed) layer -- the "+0.5"
 // places it at the center of that layer's cable cross-section, not its
 // inner or outer edge. Factored out of lengthFromTurns because the inertia
@@ -2115,6 +2242,17 @@ document.getElementById('stickyReelBadge').addEventListener('click', () => {
 });
 const payoutValEl = document.getElementById('payoutVal');
 const maxPayoutInput = document.getElementById('maxPayout');
+
+// Initial paint (taut sag, zero payout/wound, normal power-supply position,
+// barrel at rest) so the tube isn't a degenerate zeroed mesh before
+// stepReelTrim's rAF loop runs its first frame. Has to live here rather
+// than right after updateHangingCable's own definition (where the OLD
+// single-segment version's initial call used to sit) because it now needs
+// BarrelHelixCurve/WRAPS_PER_LAYER (declared further up, fine) AND
+// maxPayoutInput (declared on the line just above -- NOT fine any
+// earlier; this was caught live as a real ReferenceError before landing
+// here).
+updateHangingCable(0, 'IDLE', 0);
 
 // ---------- Control logic diagram (2026-08-09) ----------
 // Toggleable 2D SVG overlay (plain DOM, not a Three.js scene object) showing
