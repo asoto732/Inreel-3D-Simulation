@@ -120,6 +120,27 @@
           positive X is a lateral pull, positive Y swings the cable away
           from the rig, negative Y pulls it in toward the rig.
         </div>
+        <div style="padding-bottom:12px; border-bottom:1px dashed var(--border); margin-bottom:12px;">
+          <div class="axis-title" style="margin-bottom:8px;">
+            Guided tour <span class="adv-tag" style="margin-left:0;">start here</span>
+          </div>
+          <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+            Runs Obstacle Snag, Rig Motion, the 2x2 Drill Pattern, and the
+            Capacity Interlock Stress demo back to back, with a short
+            caption explaining what to watch for in each one -- the
+            fastest way to see everything on this page without knowing
+            where to click first. Just sequences the same buttons below,
+            one at a time (waiting for each to fully finish before starting
+            the next) -- nothing here is a separate demo or calculation.
+          </div>
+          <button id="tourBtn" style="width:100%; margin-top:0;">&#9654; Start Guided Tour</button>
+
+          <div id="tourState" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; transition:background .1s, border-color .1s;">
+            <div id="tourStateText" style="font-size:16px; font-weight:600; letter-spacing:0.05em; font-family:var(--mono);">IDLE</div>
+            <div id="tourStateSub" style="font-size:12px; color:var(--text-dim); margin-top:4px;">not running</div>
+          </div>
+        </div>
+
         <div id="scenarioButtons" style="display:flex; flex-direction:column; gap:6px;"></div>
 
         <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
@@ -2090,12 +2111,14 @@ function setScenarioControlsEnabled(enabled) {
   scenarioBtnEls.forEach(b => b.disabled = !enabled);
   obstacleSnagBtn.disabled = !enabled;
   // Rig Motion Demo's own buttons too -- only one script (Obstacle Snag,
-  // Rig Motion scripted/manual, the Drill Pattern demo, or the Capacity
-  // Interlock Stress demo) should ever own a0Deg/a1Deg at a time.
+  // Rig Motion scripted/manual, the Drill Pattern demo, the Capacity
+  // Interlock Stress demo, or the Guided Tour sequencing all of them)
+  // should ever own a0Deg/a1Deg at a time.
   rigDemoBtn.disabled = !enabled;
   rigManualBtn.disabled = !enabled;
   drillPatternBtn.disabled = !enabled;
   capacityDemoBtn.disabled = !enabled;
+  tourBtn.disabled = !enabled;
   a0Deg.disabled = !enabled;
   a1Deg.disabled = !enabled ? true : tensionDrive.checked; // a1Deg's disabled state is otherwise owned by tensionDrive
 }
@@ -2758,6 +2781,103 @@ function updateCapacityDemo(nowMs) {
       setScenarioControlsEnabled(true);
       setCapacityDemoStateBox('IDLE', 'not running', 'var(--border)', 'transparent');
     }
+  }
+}
+
+// ---------- Guided Tour (2026-08-10) ----------
+// A meta-sequencer, not a fifth demo -- owns no track speeds, no
+// deflection, nothing physical. It only ever clicks the SAME four buttons
+// above and watches each one's own phase variable for the SAME 'IDLE' it
+// already returns to when finished, exactly what a person clicking through
+// them by hand would do. All the actual behavior (mutual exclusion,
+// button enable/disable, cleanup) already lives in each demo -- this file
+// doesn't duplicate any of it.
+const TOUR_STEPS = [
+  {
+    name: 'OBSTACLE SNAG',
+    caption: 'Watch the cable catch on the obstacle, tension climb, then release as the control loop reels it back out.',
+    start: () => obstacleSnagBtn.click(),
+    isIdle: () => snagPhase === 'IDLE',
+  },
+  {
+    name: 'RIG MOTION DEMO',
+    caption: "The chassis trams and turns on its own tracks -- deflection is now derived from real geometry against the power supply, not a preset.",
+    start: () => rigDemoBtn.click(),
+    isIdle: () => rigDemoPhase === 'IDLE',
+  },
+  {
+    name: '2X2 DRILL PATTERN',
+    caption: 'Same track model, driven to four waypoints in sequence instead of a fixed timer -- a simple survey/drill route.',
+    start: () => drillPatternBtn.click(),
+    isIdle: () => drillPhase === 'IDLE',
+  },
+  {
+    name: 'CAPACITY INTERLOCK STRESS',
+    caption: 'The drum depletes until the real capacity interlock actually trips TRAM BLOCKED, then recovers and rearms.',
+    start: () => capacityDemoBtn.click(),
+    isIdle: () => capacityDemoPhase === 'IDLE',
+  },
+];
+const TOUR_DONE_MS = 1800;
+
+let tourPhase = 'IDLE'; // IDLE | RUNNING | DONE
+let tourStepIndex = 0;
+let tourStepActive = false; // true once the current step's start() has fired and we're waiting on its own isIdle()
+let tourDoneStartMs = 0;
+
+const tourBtn = document.getElementById('tourBtn');
+const tourStateEl = document.getElementById('tourState');
+const tourStateTextEl = document.getElementById('tourStateText');
+const tourStateSubEl = document.getElementById('tourStateSub');
+
+function setTourStateBox(text, sub, color, bg) {
+  tourStateTextEl.textContent = text;
+  tourStateSubEl.textContent = sub;
+  tourStateEl.style.borderColor = color;
+  tourStateEl.style.background = bg;
+}
+
+tourBtn.addEventListener('click', () => {
+  if (tourPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE') return;
+  tourBtn.textContent = '⏸ Touring…';
+  tourPhase = 'RUNNING';
+  tourStepIndex = 0;
+  tourStepActive = false;
+  advanceTour(performance.now());
+});
+
+// Called both from the click handler above (to kick off step 0 the instant
+// the button is pressed) and every frame from stepReelTrim() while running.
+// Chains straight into the next step's start() the moment the current one
+// reports isIdle() -- same synchronous call, no frame of gap where every
+// button would sit re-enabled between one demo's cleanup and the next
+// demo's setScenarioControlsEnabled(false).
+function advanceTour(nowMs) {
+  while (tourStepIndex < TOUR_STEPS.length) {
+    const step = TOUR_STEPS[tourStepIndex];
+    if (!tourStepActive) {
+      setTourStateBox(`STEP ${tourStepIndex + 1} / ${TOUR_STEPS.length}: ${step.name}`, step.caption, 'var(--accent)', 'rgba(79,143,240,0.12)');
+      step.start();
+      tourStepActive = true;
+      return;
+    }
+    if (!step.isIdle()) return; // still running -- check again next frame
+    tourStepIndex++;
+    tourStepActive = false;
+  }
+  tourPhase = 'DONE';
+  tourDoneStartMs = nowMs;
+  setTourStateBox('TOUR COMPLETE', "That's everything -- explore the sliders and presets above, or run any demo again on its own.", 'var(--good)', 'rgba(79,191,122,0.12)');
+}
+
+function updateGuidedTour(nowMs) {
+  if (tourPhase === 'RUNNING') {
+    advanceTour(nowMs);
+  } else if (tourPhase === 'DONE' && nowMs - tourDoneStartMs >= TOUR_DONE_MS) {
+    tourPhase = 'IDLE';
+    tourStepIndex = 0;
+    tourBtn.textContent = '▶ Start Guided Tour';
+    setTourStateBox('IDLE', 'not running', 'var(--border)', 'transparent');
   }
 }
 
@@ -3439,6 +3559,12 @@ function stepReelTrim() {
   // sets feedforwardTerm (read below) before compositeTarget is computed.
   updateObstacleScenario(performance.now());
   updateRigMotion(performance.now());
+  // Guided Tour owns no track speed or deflection state of its own -- it
+  // only clicks the buttons above at the right time -- so it doesn't need
+  // to run before this point the way the other two do. Runs unconditionally
+  // (cheap early-return when idle), independent of updateRigMotion's own
+  // rigMotionActive gate.
+  updateGuidedTour(performance.now());
 
   // Read live from the tuning panel rather than the CONTRIB_X/CONTRIB_Y/DISCARD
   // constants, which now serve only as the documented firmware defaults.
