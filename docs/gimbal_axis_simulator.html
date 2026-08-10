@@ -162,6 +162,41 @@
             <div id="snagReelCommand" style="font-size:15px; font-weight:600; font-family:var(--mono); color:var(--text-dim);">HOLD</div>
           </div>
         </div>
+
+        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+          <div class="axis-title" style="margin-bottom:8px;">
+            Rig motion demo <span class="adv-tag" style="margin-left:0;">tram + point turn</span>
+          </div>
+          <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+            Drives the whole chassis (frame, gimbal, mounting guide, barrel)
+            on simulated tracks instead of a fixed pedestal. While running,
+            the gimbal's deflection angle is no longer set by the buttons/
+            sliders above -- it's DERIVED each frame from the real geometry
+            between the gimbal's cable exit and the fixed power-supply
+            anchor, fed through the exact same encoder/P-control/reel-trim
+            pipeline everything else on this page uses. Forward tram speed
+            also feeds a feedforward term into the reel-trim controller
+            (separate from the existing proportional trim term), and the
+            total cable length driving the sag/spiral split is recomputed
+            every frame from the real tram distance.
+          </div>
+          <button id="rigDemoBtn" style="width:100%; margin-top:0;">&#9654; Start Rig Motion Demo</button>
+          <button id="rigManualBtn" style="width:100%; margin-top:8px;">&#8963; Enable manual drive (WASD / arrow keys)</button>
+
+          <div class="two-col" style="margin-top:12px;">
+            <div class="field"><label style="margin:0">Left / right track <span class="val" id="rigTrackVal">0.00 / 0.00</span></label></div>
+            <div class="field"><label style="margin:0">Forward speed <span class="val" id="rigSpeedVal">0.00 u/s</span></label></div>
+          </div>
+          <div class="two-col">
+            <div class="field"><label style="margin:0">Derived deflection <span class="val" id="rigDeflectionVal">X 0.0&deg; &middot; Y 0.0&deg;</span></label></div>
+            <div class="field"><label style="margin:0">Tram distance to supply <span class="val" id="rigDistanceVal">0.00 u</span></label></div>
+          </div>
+
+          <div id="rigState" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; transition:background .1s, border-color .1s;">
+            <div id="rigStateText" style="font-size:16px; font-weight:600; letter-spacing:0.05em; font-family:var(--mono);">PARKED</div>
+            <div id="rigStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
+          </div>
+        </div>
       </details>
 
       <details class="axis-block" style="border-left-color:#4f8ff0;">
@@ -623,7 +658,11 @@ const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
 dirLight.position.set(3, 4, 5);
 scene.add(dirLight);
 
-const grid = new THREE.GridHelper(4, 8, 0x2a323d, 0x1c232d);
+// Sized (and, below, the rig's start position offset) with the Rig Motion
+// Demo in mind -- enough ground plane that a forward/back tram run and the
+// gap to the fixed power-supply anchor both read clearly instead of the
+// rig immediately overrunning the visible floor.
+const grid = new THREE.GridHelper(6, 12, 0x2a323d, 0x1c232d);
 scene.add(grid);
 
 const PIVOT_Y = 0.75; // hoisted above the yoke-loading block below, which needs it synchronously
@@ -912,6 +951,26 @@ function loadYokePart(url, parent, transformOpts, material, fallback) {
   );
 }
 
+// ---------- Rig chassis transform (2026-08-09) ----------
+// Everything physically bolted to the tracked chassis -- frame, rig marker,
+// the whole gimbal (outerGroup/innerGroup), barrel, flanges, ground cable,
+// and the mounting/cable-guide point -- gets parented under THIS group
+// instead of directly under `scene`, so the Rig Motion Demo further down
+// can tram/turn the entire assembly as one rigid body just by moving
+// rigGroup. Everything's existing LOCAL positions (BARREL_POS, PIVOT_Y,
+// etc.) are unchanged -- they were always relative to this same origin,
+// they just used to BE world space directly since nothing ever moved.
+// The power supply anchor and obstacle are deliberately NOT parented here
+// -- they stay fixed in world space (the whole point of tramming is that
+// the rig moves relative to them).
+const rigGroup = new THREE.Group();
+// Start pulled back (+Z, away from the fixed power-supply anchor which
+// sits at world Z=-1.4 -- see POWER_SUPPLY_BASE_NORMAL below) so the Rig
+// Motion Demo's forward/back tram has real ground to cover before the
+// gimbal is right on top of the anchor.
+rigGroup.position.set(0, 0, 1.5);
+scene.add(rigGroup);
+
 const frameMat = new THREE.MeshStandardMaterial({ color: 0x394451, roughness: 0.6, metalness: 0.3 });
 const frame = new THREE.Group();
 const frameTop = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.18, 0.9), frameMat);
@@ -922,19 +981,19 @@ frame.add(frameTop);
   leg.position.set(x, 1.25, 0);
   frame.add(leg);
 });
-scene.add(frame);
-loadYokePart('../cad/mounting_frame.stl', scene, { offset: FRAME_NATIVE_OFFSET, worldY: PIVOT_Y, flip180X: false, rotateY180: true, rotateY90: true }, frameMat, frame);
+rigGroup.add(frame);
+loadYokePart('../cad/mounting_frame.stl', rigGroup, { offset: FRAME_NATIVE_OFFSET, worldY: PIVOT_Y, flip180X: false, rotateY180: true, rotateY90: true }, frameMat, frame);
 
 // Rig marker, the block the gimbal is actually bolted to. Placed so that
 // positive Axis1 (Vector Y) sways the cable toward -Z, away from this block.
 const rigMat = new THREE.MeshStandardMaterial({ color: 0x2f3a4a, roughness: 0.7, metalness: 0.2 });
 const rigMarker = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 1.0), rigMat);
 rigMarker.position.set(0, 1.75, 2.1);
-scene.add(rigMarker);
+rigGroup.add(rigMarker);
 
 const outerGroup = new THREE.Group();
 outerGroup.position.set(0, PIVOT_Y, 0);
-scene.add(outerGroup);
+rigGroup.add(outerGroup);
 
 // Ring cross-section styled after the TURCK RI360P0-QR24M0-CNX4-2H1150 datasheet
 // (edb_1590914_eng_us.pdf): bore/OD = 22/77, bolt PCD/OD = 65/77, 3 bolts at 120 deg.
@@ -1059,21 +1118,21 @@ barrelGeo.rotateZ(Math.PI / 2); // bake the drum axis onto local X, so spin is a
 const barrelMat = new THREE.MeshStandardMaterial({ color: 0x5a6473, roughness: 0.5, metalness: 0.5 });
 const barrel = new THREE.Mesh(barrelGeo, barrelMat);
 barrel.position.copy(BARREL_POS);
-scene.add(barrel);
+rigGroup.add(barrel);
 
 const spoolMat = new THREE.MeshStandardMaterial({ color: 0x3a4552, roughness: 0.6, metalness: 0.3 });
 [-0.3, 0.3].forEach(x => {
   const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.04, 24), spoolMat);
   flange.rotation.z = Math.PI / 2;
   flange.position.copy(BARREL_POS).setX(x);
-  scene.add(flange);
+  rigGroup.add(flange);
 });
 
 const groundCableMat = new THREE.MeshStandardMaterial({ color: 0xcfd4da, roughness: 0.4, metalness: 0.1 });
 const groundCableGeo = new THREE.BoxGeometry(1, 0.035, 0.07);
 const groundCable = new THREE.Mesh(groundCableGeo, groundCableMat);
 groundCable.position.copy(BARREL_POS).setY(0.02);
-scene.add(groundCable);
+rigGroup.add(groundCable);
 
 // ---------- Cable mounting/guide point near the barrel (2026-08-09) ----------
 // Fixed anchor the cable passes through on its way from the gimbal to the
@@ -1083,12 +1142,17 @@ scene.add(groundCable);
 // directly off BARREL_POS/BARREL_RADIUS, never off gimbal deflection --
 // see updateHangingCable()'s gimbal->mount vs mount->barrel segments below,
 // which is what that distinction is actually for.
-const MOUNTING_ANCHOR = new THREE.Vector3(BARREL_POS.x, BARREL_POS.y + BARREL_RADIUS + 0.2, BARREL_POS.z - 0.5);
+// MOUNTING_ANCHOR_LOCAL is RIG-LOCAL (constant relative to rigGroup, which
+// is what "fixed relative to the barrel housing" actually means now that
+// the whole chassis can tram/turn -- see the Rig Motion Demo further down).
+// updateHangingCable() reads the mesh's live WORLD position each frame via
+// mountingGuideMesh.getWorldPosition(...), not this constant directly.
+const MOUNTING_ANCHOR_LOCAL = new THREE.Vector3(BARREL_POS.x, BARREL_POS.y + BARREL_RADIUS + 0.2, BARREL_POS.z - 0.5);
 const mountingGuideMat = new THREE.MeshStandardMaterial({ color: 0x5a6473, roughness: 0.5, metalness: 0.5 });
 const mountingGuideMesh = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.015, 8, 16), mountingGuideMat);
-mountingGuideMesh.position.copy(MOUNTING_ANCHOR);
+mountingGuideMesh.position.copy(MOUNTING_ANCHOR_LOCAL);
 mountingGuideMesh.rotation.x = Math.PI / 2;
-scene.add(mountingGuideMesh);
+rigGroup.add(mountingGuideMesh);
 
 // ---------- Obstacle snag scenario: procedural obstacle mesh (2026-08-09) ----------
 // Simple placeholder geometry, no CAD import -- just a visual anchor for the
@@ -1274,6 +1338,7 @@ const _supplyCableWrapPoint = new THREE.Vector3();
 const _supplyCableTargetMid = new THREE.Vector3();
 const _supplyCableControl = new THREE.Vector3();
 const _supplyCableTangent = new THREE.Vector3();
+const _supplyCableMountWorld = new THREE.Vector3();
 
 // Called from stepReelTrim() every frame, right after it computes the drum
 // model's current payoutLength -- so this always reflects both the LATEST
@@ -1361,20 +1426,31 @@ function updateHangingCable(payoutLength, phase, wrapFactor) {
 
   // t=0 is the ACTIVE end of the coil (the current outermost wrap, where
   // free cable actually enters/exits) -- see BarrelHelixCurve's own comment
-  // for why that's t=0 and not t=1.
-  const helixCurve = new BarrelHelixCurve(woundTurns, barrel.rotation.x);
+  // for why that's t=0 and not t=1. Passes barrel.matrixWorld (not just
+  // barrel.rotation.x) so the wound coil is correctly carried along by BOTH
+  // the barrel's own spin AND the rig's current tram/yaw -- see
+  // BarrelHelixCurve's constructor comment for why that's the right thing
+  // to hand it, now that the barrel sits inside a moving rigGroup.
+  const helixCurve = new BarrelHelixCurve(woundTurns, barrel.matrixWorld);
   helixCurve.getPoint(0, _supplyCableTangent);
+
+  // Mounting anchor's LIVE world position -- MOUNTING_ANCHOR_LOCAL is fixed
+  // relative to rigGroup, but rigGroup itself can now tram/turn (Rig Motion
+  // Demo further down), so this has to be read fresh every frame rather
+  // than treated as a world constant.
+  mountingGuideMesh.getWorldPosition(_supplyCableMountWorld);
 
   // Segment B (gimbal exit -> mounting anchor): bends with gimbal
   // deflection for free, because _supplyCableStart (hub's world position)
-  // moves every frame -- MOUNTING_ANCHOR itself never does.
-  const gimbalToMountCurve = new THREE.LineCurve3(_supplyCableStart.clone(), MOUNTING_ANCHOR.clone());
+  // moves every frame -- the mounting anchor moves only with the RIG, never
+  // with gimbal deflection itself.
+  const gimbalToMountCurve = new THREE.LineCurve3(_supplyCableStart.clone(), _supplyCableMountWorld.clone());
   // Segment C (mounting anchor -> current end of the wound coil): fixed
-  // relative to the barrel HOUSING -- both endpoints derive from
-  // MOUNTING_ANCHOR (fixed) and the helix (barrel-side state only), never
-  // from gimbal deflection. Ends exactly at the helix's own t=0 point, so
+  // relative to the barrel HOUSING -- both endpoints derive from the
+  // mounting anchor and the helix (barrel/rig-side state only), never from
+  // gimbal deflection. Ends exactly at the helix's own t=0 point, so
   // there's no seam between the straight segment and the spiral (req. 5).
-  const mountToBarrelCurve = new THREE.LineCurve3(MOUNTING_ANCHOR.clone(), _supplyCableTangent.clone());
+  const mountToBarrelCurve = new THREE.LineCurve3(_supplyCableMountWorld.clone(), _supplyCableTangent.clone());
 
   const fullPath = new THREE.CurvePath();
   fullPath.add(sagCurve);
@@ -1489,7 +1565,14 @@ let dragging = false, lastX = 0, lastY = 0;
 // ---------- Drag the white cable tip to set both axes directly ----------
 const raycaster = new THREE.Raycaster();
 const pointerNDC = new THREE.Vector2();
-const PIVOT_WORLD = new THREE.Vector3(0, PIVOT_Y, 0); // outerGroup only rotates, never translates, so this is constant
+// outerGroup used to sit directly under `scene` at a fixed spot, so this
+// was a true constant. Now that it's parented under the movable rigGroup
+// (see the Rig Motion Demo below), the pivot's WORLD position moves with
+// the rig -- PIVOT_WORLD is recomputed from rigGroup's current transform
+// each time it's used below instead of being a fixed Vector3.
+const _pivotLocal = new THREE.Vector3(0, PIVOT_Y, 0);
+const PIVOT_WORLD = new THREE.Vector3();
+function currentPivotWorld() { return rigGroup.localToWorld(PIVOT_WORLD.copy(_pivotLocal)); }
 let draggingHub = false;
 
 function setPointerNDC(e) {
@@ -1505,7 +1588,9 @@ function hitsDragHandle(e) {
 }
 
 renderer.domElement.addEventListener('pointerdown', e => {
-  if (hitsDragHandle(e)) {
+  // Whichever of Obstacle Snag / Rig Motion is running already owns
+  // a0Deg/a1Deg this frame -- don't let a manual drag fight it.
+  if (hitsDragHandle(e) && snagPhase === 'IDLE' && !rigMotionActive) {
     draggingHub = true;
     if (tensionDrive.checked) { tensionDrive.checked = false; applyTensionDrive(); }
     wrapEl.style.cursor = 'grabbing';
@@ -1522,10 +1607,15 @@ window.addEventListener('pointermove', e => {
   if (draggingHub) {
     setPointerNDC(e);
     raycaster.setFromCamera(pointerNDC, camera);
-    const sphere = new THREE.Sphere(PIVOT_WORLD, CABLE_TIP_RADIUS);
+    const pivotWorld = currentPivotWorld();
+    const sphere = new THREE.Sphere(pivotWorld, CABLE_TIP_RADIUS);
     const hit = new THREE.Vector3();
     if (raycaster.ray.intersectSphere(sphere, hit)) {
-      const p = hit.sub(PIVOT_WORLD);
+      // Resolve into the rig's own local frame (not world) -- d0/d1 are
+      // angles of the gimbal relative to the CHASSIS, so if the rig has
+      // yawed (e.g. parked mid-turn by the Rig Motion Demo), the drag math
+      // needs to rotate with it rather than reading raw world axes.
+      const p = rigGroup.worldToLocal(hit).sub(_pivotLocal);
       // Inverse of: p = Rz(d0) * Rx(d1) * (0, -CABLE_TIP_RADIUS, 0)
       // => px = R*sin(d0), py = -R*cos(d0)  (R = CABLE_TIP_RADIUS*cos(d1)), pz = -R'*sin(d1)
       const d1rad = Math.asin(THREE.MathUtils.clamp(-p.z / CABLE_TIP_RADIUS, -1, 1));
@@ -1735,6 +1825,10 @@ const snagReelCommandEl = document.getElementById('snagReelCommand');
 function setScenarioControlsEnabled(enabled) {
   scenarioBtnEls.forEach(b => b.disabled = !enabled);
   obstacleSnagBtn.disabled = !enabled;
+  // Rig Motion Demo's own buttons too -- only one script (Obstacle Snag or
+  // Rig Motion, scripted or manual) should ever own a0Deg/a1Deg at a time.
+  rigDemoBtn.disabled = !enabled;
+  rigManualBtn.disabled = !enabled;
   a0Deg.disabled = !enabled;
   a1Deg.disabled = !enabled ? true : tensionDrive.checked; // a1Deg's disabled state is otherwise owned by tensionDrive
 }
@@ -1840,6 +1934,251 @@ function updateObstacleScenario(nowMs) {
   snagTensionValEl.textContent = snagTensionPct.toFixed(0) + '%';
   snagTensionBarEl.style.width = snagTensionPct + '%';
   updateObstacleMeshVisual(snagPhase);
+}
+
+// ---------- Rig Motion Demo: differential-track chassis (2026-08-09) ----------
+// Drives `rigGroup` (frame, gimbal, mounting-guide, barrel -- see that
+// group's own comment near its declaration) via a simple two-track
+// differential-drive model, and while active DERIVES the gimbal's
+// deflection from the resulting geometry (cable-exit point vs. the fixed
+// power-supply anchor) instead of reading it from sliders/presets/drag or
+// the Obstacle Snag script -- replacing that input path for the duration
+// of a run, same mutual-exclusion pattern Obstacle Snag already uses via
+// setScenarioControlsEnabled, just extended to cover these buttons too.
+const TRACK_WIDTH = 1.2; // scene units between the two tracks -- illustrative, not tied to a real chassis spec
+const MAX_TRACK_SPEED = 0.5; // scene units/sec, illustrative
+const RIG_FEEDFORWARD_GAIN = 0.15; // tunable: how strongly forward tram speed biases reel-trim before the proportional deflection term (rampedContribution) engages
+
+let leftTrackSpeed = 0, rightTrackSpeed = 0; // target speeds -- set by either the scripted sequence or manual keyboard drive, nothing else
+let rigForwardSpeed = 0, rigYawRate = 0, rigYaw = 0;
+let rigMotionActive = false; // true whenever the demo script OR manual drive currently owns a0Deg/a1Deg
+let rigManualActive = false;
+let feedforwardTerm = 0; // read by stepReelTrim's compositeTarget below; stays 0 whenever this feature is idle, so existing behavior is unchanged when it's not in use
+let lastRigTime = performance.now();
+
+const rigDemoBtn = document.getElementById('rigDemoBtn');
+const rigManualBtn = document.getElementById('rigManualBtn');
+const rigTrackValEl = document.getElementById('rigTrackVal');
+const rigSpeedValEl = document.getElementById('rigSpeedVal');
+const rigDeflectionValEl = document.getElementById('rigDeflectionVal');
+const rigDistanceValEl = document.getElementById('rigDistanceVal');
+const rigStateEl = document.getElementById('rigState');
+const rigStateTextEl = document.getElementById('rigStateText');
+const rigStateSubEl = document.getElementById('rigStateSub');
+
+function setRigStateBox(text, sub, color, bg) {
+  rigStateTextEl.textContent = text;
+  rigStateSubEl.textContent = sub;
+  rigStateEl.style.borderColor = color;
+  rigStateEl.style.background = bg;
+}
+
+// ----- Scripted sequence: tram forward, pause, tram back, point turn left, pause, point turn right -----
+const RIG_DEMO_PHASE_DURATION_MS = {
+  FORWARD: 3000, PAUSE1: 1000, BACKWARD: 3000, PAUSE2: 1000,
+  TURN_LEFT: 2500, PAUSE3: 1000, TURN_RIGHT: 2500,
+};
+let rigDemoPhase = 'IDLE';
+let rigDemoPhaseStartMs = 0;
+
+rigDemoBtn.addEventListener('click', () => {
+  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive) return;
+  setScenarioControlsEnabled(false);
+  rigDemoBtn.textContent = '▶ Running…';
+  rigMotionActive = true;
+  rigDemoPhase = 'FORWARD';
+  rigDemoPhaseStartMs = performance.now();
+});
+
+function updateRigDemoScript(nowMs) {
+  const elapsedMs = nowMs - rigDemoPhaseStartMs;
+  const d = RIG_DEMO_PHASE_DURATION_MS;
+
+  if (rigDemoPhase === 'FORWARD') {
+    leftTrackSpeed = rightTrackSpeed = MAX_TRACK_SPEED;
+    setRigStateBox('TRAMMING FORWARD', 'both tracks forward', 'var(--accent)', 'rgba(79,143,240,0.12)');
+    if (elapsedMs >= d.FORWARD) { rigDemoPhase = 'PAUSE1'; rigDemoPhaseStartMs = nowMs; }
+
+  } else if (rigDemoPhase === 'PAUSE1') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setRigStateBox('PAUSED', 'tracks stopped', 'var(--border)', 'transparent');
+    if (elapsedMs >= d.PAUSE1) { rigDemoPhase = 'BACKWARD'; rigDemoPhaseStartMs = nowMs; }
+
+  } else if (rigDemoPhase === 'BACKWARD') {
+    leftTrackSpeed = rightTrackSpeed = -MAX_TRACK_SPEED;
+    setRigStateBox('TRAMMING BACK', 'both tracks reverse', 'var(--accent)', 'rgba(79,143,240,0.12)');
+    if (elapsedMs >= d.BACKWARD) { rigDemoPhase = 'PAUSE2'; rigDemoPhaseStartMs = nowMs; }
+
+  } else if (rigDemoPhase === 'PAUSE2') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setRigStateBox('PAUSED', 'tracks stopped', 'var(--border)', 'transparent');
+    if (elapsedMs >= d.PAUSE2) { rigDemoPhase = 'TURN_LEFT'; rigDemoPhaseStartMs = nowMs; }
+
+  } else if (rigDemoPhase === 'TURN_LEFT') {
+    // Deliberately NOT perfectly equal-and-opposite (0.97x vs 1.0x) -- a
+    // real tracked vehicle's point turn always has some small scrub
+    // radius, true zero-radius isn't realistic (per the ask).
+    leftTrackSpeed = -MAX_TRACK_SPEED * 0.97;
+    rightTrackSpeed = MAX_TRACK_SPEED;
+    setRigStateBox('POINT TURN LEFT', 'tracks counter-rotating', 'var(--warn)', 'rgba(226,87,76,0.12)');
+    if (elapsedMs >= d.TURN_LEFT) { rigDemoPhase = 'PAUSE3'; rigDemoPhaseStartMs = nowMs; }
+
+  } else if (rigDemoPhase === 'PAUSE3') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setRigStateBox('PAUSED', 'tracks stopped', 'var(--border)', 'transparent');
+    if (elapsedMs >= d.PAUSE3) { rigDemoPhase = 'TURN_RIGHT'; rigDemoPhaseStartMs = nowMs; }
+
+  } else if (rigDemoPhase === 'TURN_RIGHT') {
+    leftTrackSpeed = MAX_TRACK_SPEED;
+    rightTrackSpeed = -MAX_TRACK_SPEED * 0.97;
+    setRigStateBox('POINT TURN RIGHT', 'tracks counter-rotating', 'var(--warn)', 'rgba(226,87,76,0.12)');
+    if (elapsedMs >= d.TURN_RIGHT) {
+      leftTrackSpeed = rightTrackSpeed = 0;
+      rigDemoPhase = 'IDLE';
+      rigMotionActive = false;
+      rigDemoBtn.textContent = '▶ Start Rig Motion Demo';
+      setScenarioControlsEnabled(true);
+      setRigStateBox('PARKED', 'not running', 'var(--border)', 'transparent');
+    }
+  }
+}
+
+// ----- Manual keyboard drive (WASD / arrow keys) -----
+const rigKeysHeld = new Set();
+rigManualBtn.addEventListener('click', () => {
+  if (rigManualActive) {
+    rigManualActive = false;
+    rigMotionActive = false;
+    leftTrackSpeed = rightTrackSpeed = 0;
+    rigKeysHeld.clear();
+    rigManualBtn.textContent = '⌃ Enable manual drive (WASD / arrow keys)';
+    setScenarioControlsEnabled(true);
+    setRigStateBox('PARKED', 'not running', 'var(--border)', 'transparent');
+    return;
+  }
+  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE') return;
+  rigManualActive = true;
+  rigMotionActive = true;
+  setScenarioControlsEnabled(false);
+  rigManualBtn.disabled = false; // everything else gets locked out, but this one stays clickable so it can be turned back off
+  rigManualBtn.textContent = '⌃ Disable manual drive';
+});
+window.addEventListener('keydown', e => {
+  if (!rigManualActive) return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return; // don't steal keys from number inputs elsewhere on the page
+  const key = e.key.toLowerCase();
+  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+    rigKeysHeld.add(key);
+    e.preventDefault();
+  }
+});
+window.addEventListener('keyup', e => { rigKeysHeld.delete(e.key.toLowerCase()); });
+
+function updateRigManualDrive() {
+  const throttle = (rigKeysHeld.has('w') || rigKeysHeld.has('arrowup') ? 1 : 0)
+    - (rigKeysHeld.has('s') || rigKeysHeld.has('arrowdown') ? 1 : 0);
+  const turn = (rigKeysHeld.has('d') || rigKeysHeld.has('arrowright') ? 1 : 0)
+    - (rigKeysHeld.has('a') || rigKeysHeld.has('arrowleft') ? 1 : 0);
+  leftTrackSpeed = MAX_TRACK_SPEED * (throttle - turn);
+  rightTrackSpeed = MAX_TRACK_SPEED * (throttle + turn);
+  const idle = throttle === 0 && turn === 0;
+  setRigStateBox(
+    idle ? 'PARKED' : 'MANUAL DRIVE',
+    idle ? 'WASD / arrow keys to drive' : `throttle ${throttle}, turn ${turn}`,
+    idle ? 'var(--border)' : 'var(--accent)',
+    idle ? 'transparent' : 'rgba(79,143,240,0.12)'
+  );
+}
+
+// ----- Shared per-frame update: track integration, chassis transform, -----
+// ----- geometry-derived deflection, feedforward, dynamic cable length -----
+const _rigSupplyLocal = new THREE.Vector3();
+const _rigDeflectionVec = new THREE.Vector3();
+const _rigHubWorld = new THREE.Vector3();
+
+// Called from stepReelTrim(), same spot updateObstacleScenario already
+// runs from -- whatever this sets a0Deg/a1Deg to needs to feed through the
+// real encoder/P-control/reel-trim pipeline on the SAME frame it's set.
+function updateRigMotion(nowMs) {
+  const rigDt = Math.min(0.1, Math.max(0, (nowMs - lastRigTime) / 1000));
+  lastRigTime = nowMs;
+
+  if (rigDemoPhase !== 'IDLE') updateRigDemoScript(nowMs);
+  if (rigManualActive) updateRigManualDrive();
+
+  if (!rigMotionActive) { feedforwardTerm = 0; return; }
+
+  // Differential-drive integration: equal same-sign speeds -> pure
+  // tramming (yawRate=0); equal-and-opposite speeds -> rotation in place
+  // (forwardSpeed=0, a point turn) -- see updateRigDemoScript's turn
+  // phases for why the scripted pair is slightly unequal rather than
+  // mathematically exact opposites.
+  rigForwardSpeed = (leftTrackSpeed + rightTrackSpeed) / 2;
+  rigYawRate = (rightTrackSpeed - leftTrackSpeed) / TRACK_WIDTH;
+  rigYaw += rigYawRate * rigDt;
+  rigGroup.position.x += rigForwardSpeed * rigDt * Math.sin(rigYaw);
+  rigGroup.position.z += rigForwardSpeed * rigDt * Math.cos(rigYaw);
+  rigGroup.rotation.y = rigYaw;
+
+  scene.updateMatrixWorld();
+  hub.getWorldPosition(_rigHubWorld);
+  // Rig Motion and Obstacle Snag are mutually exclusive (enforced above),
+  // so the power supply is guaranteed to be parked at its NORMAL position
+  // whenever this runs -- read the fixed world constant directly rather
+  // than powerSupplyAnchorMesh.position, which updateHangingCable only
+  // refreshes later this same frame and would otherwise be one frame stale.
+  const supplyAnchorWorld = POWER_SUPPLY_ANCHOR_NORMAL;
+
+  // Resolve into the RIG's own local frame -- both the pivot reference and
+  // the target go through the same worldToLocal, so translation AND yaw
+  // cancel out correctly and what's left is a pure rig-relative direction,
+  // exactly like the drag interaction's pivotWorld/_pivotLocal above.
+  rigGroup.worldToLocal(_rigSupplyLocal.copy(supplyAnchorWorld));
+  _rigDeflectionVec.copy(_rigSupplyLocal).sub(_pivotLocal);
+
+  // Same inverse-kinematics formula the existing cable-drag interaction
+  // already uses, generalized to an arbitrary-length vector (divide by its
+  // own length instead of the fixed CABLE_TIP_RADIUS) rather than a
+  // re-derivation -- carries the same approximation that formula already
+  // does (treats the pivot as the cable's hang origin, ignoring the small
+  // CABLE_EXIT_OFFSET), consistent with the rest of this file.
+  const len = Math.max(0.0001, _rigDeflectionVec.length());
+  const d1rad = Math.asin(THREE.MathUtils.clamp(-_rigDeflectionVec.z / len, -1, 1));
+  const d0rad = Math.atan2(_rigDeflectionVec.x, -_rigDeflectionVec.y);
+  let d0deg = THREE.MathUtils.radToDeg(d0rad);
+  let d1deg = THREE.MathUtils.radToDeg(d1rad);
+  // Same mechanical hard-stop clamp every other input source on this page
+  // already goes through (a0Deg/a1Deg's real min/max travel limits) --
+  // in case a sharp turn would otherwise ask for more deflection than the
+  // gimbal can physically produce.
+  d0deg = Math.max(parseFloat(a0Deg.min), Math.min(parseFloat(a0Deg.max), d0deg));
+  d1deg = Math.max(parseFloat(a1Deg.min), Math.min(parseFloat(a1Deg.max), d1deg));
+  a0Deg.value = d0deg;
+  a1Deg.value = d1deg;
+  render();
+
+  // Feedforward: forward tram speed biases the reel-trim controller
+  // directly, BEFORE the proportional deflection term (rampedContribution)
+  // even engages -- see stepReelTrim's compositeTarget, now
+  // `feedforwardTerm + rampedContribution` instead of a bare `0.0 +`.
+  // Sign convention: driving forward (toward the supply, per the rig's
+  // pulled-back start position) biases toward paying OUT slack ahead of
+  // the proportional term catching up, matching this file's existing
+  // "moving away reels out, moving back reels in" framing.
+  feedforwardTerm = rigForwardSpeed * RIG_FEEDFORWARD_GAIN;
+
+  // Dynamic total cable length (real tram distance, not just deflection
+  // trim): written directly into the SAME maxPayoutInput.value both
+  // stepReelTrim's payout calc and updateHangingCable's wound-fraction
+  // split already read -- not a parallel value, the actual existing one.
+  const distanceToSupply = _rigHubWorld.distanceTo(supplyAnchorWorld);
+  maxPayoutInput.value = distanceToSupply.toFixed(2);
+
+  rigTrackValEl.textContent = `${leftTrackSpeed.toFixed(2)} / ${rightTrackSpeed.toFixed(2)}`;
+  rigSpeedValEl.textContent = `${rigForwardSpeed.toFixed(2)} u/s`;
+  rigDeflectionValEl.textContent = `X ${d0deg.toFixed(1)}° · Y ${d1deg.toFixed(1)}°`;
+  rigDistanceValEl.textContent = `${distanceToSupply.toFixed(2)} u`;
 }
 
 function render() {
@@ -1972,37 +2311,41 @@ const WRAPS_PER_LAYER = Math.floor(DRUM_WIDTH_M / CABLE_OD_M); // ~34, width / c
 const CABLE_DIAMETER_IN = 2.12; // exposed per the ask; equals CABLE_OD_M's own real-world value (0.053848m), just named for where it's actually used below
 const HELIX_PITCH_SCENE = CABLE_OD_M * (BARREL_LENGTH / DRUM_WIDTH_M);
 const HELIX_RADIUS = BARREL_RADIUS + SUPPLY_CABLE_RADIUS; // cable tube sits just outside the drum's own surface, not intersecting it
-const HELIX_START_X = BARREL_POS.x - BARREL_LENGTH / 2; // where turn=0 (the fixed, buried clamp point) sits
+const HELIX_START_X_LOCAL = -BARREL_LENGTH / 2; // where turn=0 (the fixed, buried clamp point) sits, in the barrel's OWN local frame -- no BARREL_POS needed here, matrixWorld supplies that
 
-// Parametric helix, in WORLD space. t=0 is deliberately the ACTIVE/outermost
-// wrap (turn=this.turns) and t=1 the fixed clamp point (turn=0) -- backwards
-// from the "obvious" turn=0-at-t=0 mapping -- because the free cable segment
-// needs to connect to the CURRENT end of the coil (where cable actually
-// enters/exits as it winds), not the buried origin point, and CurvePath
-// chains sub-curves start-to-end: putting the active end at t=0 means
-// segment C (mounting -> barrel) can end exactly at helixCurve.getPoint(0)
-// with no seam, ever (requirement 5).
-// `rotationOffset` is barrel.rotation.x at generation time -- the SAME
-// value stepReelTrim() already updates from drumOmega each frame (see
-// "barrel.rotation.x -= drumOmega * dt" below) -- read here, not
-// duplicated, so the wound coil visually spins WITH the barrel mesh for
-// free, in the correct direction, without needing to parent this geometry
-// to the barrel (which a single free+wound tube can't do anyway, since
-// only PART of it should rotate with the drum).
+// Parametric helix. Computed in the BARREL's own local frame (axial = local
+// X, matching how barrelGeo itself was built -- see barrelGeo.rotateZ above
+// -- radius circle in local Y/Z) and then carried into world space via
+// `this.matrixWorld`, exactly the same matrix Three.js uses to place the
+// barrel MESH's own vertices. That's the point: a wound-cable point should
+// behave EXACTLY like a point rigidly stuck to the drum surface, rotating
+// with the barrel's own spin AND translating/rotating with however the rig
+// chassis (rigGroup, see the Rig Motion Demo further down) currently sits
+// -- both fall out for free from matrixWorld, nothing here has to know
+// about drumOmega OR the rig's tram/yaw directly.
+// t=0 is deliberately the ACTIVE/outermost wrap (turn=this.turns) and t=1
+// the fixed clamp point (turn=0) -- backwards from the "obvious"
+// turn=0-at-t=0 mapping -- because the free cable segment needs to connect
+// to the CURRENT end of the coil (where cable actually enters/exits as it
+// winds), not the buried origin point, and CurvePath chains sub-curves
+// start-to-end: putting the active end at t=0 means segment C (mounting ->
+// barrel) can end exactly at helixCurve.getPoint(0) with no seam, ever
+// (requirement 5).
 class BarrelHelixCurve extends THREE.Curve {
-  constructor(turns, rotationOffset) {
+  constructor(turns, matrixWorld) {
     super();
     this.turns = Math.max(0.001, turns); // never exactly 0 -- avoids a degenerate zero-length sub-curve when nothing is wound
-    this.rotationOffset = rotationOffset;
+    this.matrixWorld = matrixWorld;
   }
   getPoint(t, target = new THREE.Vector3()) {
     const u = (1 - t) * this.turns;
-    const angle = u * Math.PI * 2 + this.rotationOffset;
-    return target.set(
-      HELIX_START_X + u * HELIX_PITCH_SCENE,
-      BARREL_POS.y + HELIX_RADIUS * Math.cos(angle),
-      BARREL_POS.z + HELIX_RADIUS * Math.sin(angle)
+    const angle = u * Math.PI * 2;
+    target.set(
+      HELIX_START_X_LOCAL + u * HELIX_PITCH_SCENE,
+      HELIX_RADIUS * Math.cos(angle),
+      HELIX_RADIUS * Math.sin(angle)
     );
+    return target.applyMatrix4(this.matrixWorld);
   }
 }
 
@@ -2411,8 +2754,11 @@ function stepReelTrim() {
   // Advance the Obstacle Snag scenario (if running) first: it sets a0Deg/
   // a1Deg.value and calls render() itself when active, so currentVX/
   // currentVY below are already this frame's values by the time they're
-  // read, exactly as if a user had just dragged a slider.
+  // read, exactly as if a user had just dragged a slider. Rig Motion is
+  // the same pattern -- mutually exclusive with Obstacle Snag, and also
+  // sets feedforwardTerm (read below) before compositeTarget is computed.
   updateObstacleScenario(performance.now());
+  updateRigMotion(performance.now());
 
   // Read live from the tuning panel rather than the CONTRIB_X/CONTRIB_Y/DISCARD
   // constants, which now serve only as the documented firmware defaults.
@@ -2425,7 +2771,11 @@ function stepReelTrim() {
 
   rampedContribution += (contribution - rampedContribution) * EMA_GAIN;
 
-  const compositeTarget = 0.0 + rampedContribution;
+  // feedforwardTerm (Rig Motion's real tram speed, scaled) plus
+  // rampedContribution (proportional trim from deflection) -- feedforward
+  // and trim summed, not blended; feedforwardTerm is 0 whenever Rig Motion
+  // isn't running, so this is a strict superset of the prior `0.0 + ...`.
+  const compositeTarget = feedforwardTerm + rampedContribution;
   const difference = compositeTarget - controllerValue;
 
   const deceleratingIntoReverse = (controllerValue >= 0) && (compositeTarget < 0);
