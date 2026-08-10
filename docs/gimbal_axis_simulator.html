@@ -436,6 +436,26 @@
             <text id="cldLengthVal" x="562" y="220">0.00 u</text>
           </g>
         </svg>
+
+        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+          <div class="axis-title" style="margin-bottom:2px;">
+            Timeline <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; last 20s, tension / duty / deflection</span>
+          </div>
+          <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+            Same three values as the readouts above, plotted over time instead
+            of only shown as an instantaneous number -- makes cause and effect
+            (a deflection spike driving a duty ramp driving a tension rise)
+            visible as a shape, not just numbers changing. Duty is signed
+            (above center = UNREEL, below = REEL IN), matching the sign
+            convention the command flash-channel above already uses.
+          </div>
+          <canvas id="cldTimelineCanvas" width="900" height="140" style="width:100%; height:140px; display:block; background:var(--panel-2); border:1px solid var(--border); border-radius:6px;"></canvas>
+          <div class="legend" style="margin-top:8px;">
+            <span><span class="dot" style="background:#e2574c"></span>Tension %</span>
+            <span><span class="dot" style="background:#4f8ff0"></span>Duty % (signed)</span>
+            <span><span class="dot" style="background:#f0a24f"></span>Deflection magnitude</span>
+          </div>
+        </div>
       </div>
 
       <table>
@@ -3182,6 +3202,55 @@ const cldCommandValEl = document.getElementById('cldCommandVal');
 const cldVelocityValEl = document.getElementById('cldVelocityVal');
 const cldLengthValEl = document.getElementById('cldLengthVal');
 
+// ---------- Timeline strip chart (2026-08-10) ----------
+// Plain Canvas 2D, not SVG -- a scrolling line chart redraws its whole
+// buffer every update anyway (no benefit to SVG's retained-mode DOM nodes
+// here), and canvas is cheap for the couple-hundred points a 20s window
+// holds at this page's frame rate. Same three values the readouts just
+// above already show, sharing one -100..100 vertical scale: tension/
+// deflection are always 0..100 (upper half), duty is signed like the
+// command flash-channel's own commandSigned convention (positive =
+// UNREEL, negative = REEL IN, so it naturally uses the lower half too).
+const cldTimelineCanvas = document.getElementById('cldTimelineCanvas');
+const cldTimelineCtx = cldTimelineCanvas.getContext('2d');
+const TIMELINE_WINDOW_MS = 20000;
+let timelineSamples = []; // {t, tension, duty, defl}, all -100..100
+
+function updateTimeline(nowMs, tensionPct, dutySigned, deflectionPct) {
+  timelineSamples.push({ t: nowMs, tension: tensionPct, duty: dutySigned, defl: deflectionPct });
+  const cutoff = nowMs - TIMELINE_WINDOW_MS;
+  while (timelineSamples.length && timelineSamples[0].t < cutoff) timelineSamples.shift();
+
+  const w = cldTimelineCanvas.width, h = cldTimelineCanvas.height;
+  const ctx = cldTimelineCtx;
+  ctx.clearRect(0, 0, w, h);
+
+  // Gridlines at +-100/+-50/0, zero line emphasized since duty's sign
+  // flips across it.
+  ctx.lineWidth = 1;
+  [-100, -50, 0, 50, 100].forEach(v => {
+    const y = h / 2 - (v / 100) * (h / 2 - 4);
+    ctx.strokeStyle = v === 0 ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  });
+
+  function plot(key, color) {
+    if (timelineSamples.length < 2) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    timelineSamples.forEach((s, i) => {
+      const x = w * (1 - (nowMs - s.t) / TIMELINE_WINDOW_MS); // newest sample at the right edge, scrolling left as it ages out
+      const y = h / 2 - (s[key] / 100) * (h / 2 - 4);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+  plot('tension', '#e2574c');
+  plot('duty', '#4f8ff0');
+  plot('defl', '#f0a24f');
+}
+
 // One flash-tracking record per arrow: remembers the last numeric value seen
 // so a "meaningful change" (beyond a per-channel noise threshold) can be
 // detected and turned into a brief glow, decaying back to the resting style
@@ -3251,6 +3320,10 @@ function updateControlDiagram(command, dutyPercent, payoutLength) {
   // the cable's own sag stiffness, so this readout matches what the 3D view
   // is actually showing instead of an independent priority-ternary.
   cldTensionValEl.textContent = `tension ${cableTensionPct.toFixed(0)}%`;
+
+  // Same mag/commandSigned already computed above for the sensor-fusion and
+  // command flash-channels -- not recomputed here.
+  updateTimeline(nowMs, cableTensionPct, commandSigned, Math.min(100, mag / 10));
 
   Object.values(cldChannels).forEach(ch => cldPaintChannel(ch, nowMs));
 }
