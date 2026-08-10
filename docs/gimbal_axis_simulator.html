@@ -281,6 +281,38 @@
             <div id="capacityDemoStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
           </div>
         </div>
+
+        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+          <div class="axis-title" style="margin-bottom:8px;">
+            Combined Route Demo <span class="adv-tag" style="margin-left:0;">route + snag + drill</span>
+          </div>
+          <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+            Trams toward a drill hole placed on the far side of the same
+            obstacle Obstacle Snag uses -- so the straight-line route
+            actually passes close by it -- using the exact same waypoint
+            turn/tram model as the Drill Pattern demo. When the rig gets
+            near the obstacle mid-transit, it stops and triggers the real
+            Obstacle Snag scenario in place (the same button above, just
+            clicked programmatically): tension builds and releases exactly
+            as it does on its own. Once that finishes, the rig resumes the
+            same route to the hole and runs the same drill-bit cycle the
+            2x2 Drill Pattern demo uses. Nothing here is a new movement,
+            snag, or drill system -- it's the three existing ones,
+            sequenced so a single leg exercises all of them together
+            instead of only ever running one demo at a time.
+          </div>
+          <button id="routeDemoBtn" style="width:100%; margin-top:0;">&#9654; Run Combined Route Demo</button>
+
+          <div class="two-col" style="margin-top:12px;">
+            <div class="field"><label style="margin:0">Distance to hole <span class="val" id="routeDemoDistVal">0.00 u</span></label></div>
+            <div class="field"><label style="margin:0">Obstacle snag <span class="val" id="routeDemoSnagVal">not yet</span></label></div>
+          </div>
+
+          <div id="routeDemoState" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; transition:background .1s, border-color .1s;">
+            <div id="routeDemoStateText" style="font-size:16px; font-weight:600; letter-spacing:0.05em; font-family:var(--mono);">IDLE</div>
+            <div id="routeDemoStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
+          </div>
+        </div>
       </details>
 
       <details class="axis-block" style="border-left-color:#4f8ff0;">
@@ -1322,6 +1354,20 @@ const drillHoleMarkers = DRILL_HOLES.map(pos => {
   return marker;
 });
 
+// ---------- Combined Route Demo waypoint + marker (2026-08-10) ----------
+// One destination, deliberately on the FAR side of the obstacle (below,
+// negative Z) from the rig's start (positive Z) -- so the straight-line
+// route between them passes within ROUTE_OBSTACLE_TRIGGER_DIST of the
+// obstacle's own position (0.4, -0.9) without needing any real pathfinding
+// or collision geometry, just the same waypoint turn/tram model the 2x2
+// Drill Pattern already uses.
+const ROUTE_FINAL_HOLE = new THREE.Vector3(0.5, 0, -2.3);
+const routeHoleMarker = new THREE.Mesh(new THREE.CircleGeometry(0.12, 20), drillHoleMarkerMat);
+routeHoleMarker.rotation.x = -Math.PI / 2;
+routeHoleMarker.position.set(ROUTE_FINAL_HOLE.x, 0.006, ROUTE_FINAL_HOLE.z);
+routeHoleMarker.visible = false;
+scene.add(routeHoleMarker);
+
 // ---------- Obstacle snag scenario: procedural obstacle mesh (2026-08-09) ----------
 // Simple placeholder geometry, no CAD import -- just a visual anchor for the
 // "Obstacle Snag" demo scenario further down, marking a snag point out to
@@ -2112,13 +2158,15 @@ function setScenarioControlsEnabled(enabled) {
   obstacleSnagBtn.disabled = !enabled;
   // Rig Motion Demo's own buttons too -- only one script (Obstacle Snag,
   // Rig Motion scripted/manual, the Drill Pattern demo, the Capacity
-  // Interlock Stress demo, or the Guided Tour sequencing all of them)
-  // should ever own a0Deg/a1Deg at a time.
+  // Interlock Stress demo, the Guided Tour sequencing all of them, or the
+  // Combined Route Demo nesting Obstacle Snag mid-route) should ever own
+  // a0Deg/a1Deg at a time.
   rigDemoBtn.disabled = !enabled;
   rigManualBtn.disabled = !enabled;
   drillPatternBtn.disabled = !enabled;
   capacityDemoBtn.disabled = !enabled;
   tourBtn.disabled = !enabled;
+  routeDemoBtn.disabled = !enabled;
   a0Deg.disabled = !enabled;
   a1Deg.disabled = !enabled ? true : tensionDrive.checked; // a1Deg's disabled state is otherwise owned by tensionDrive
 }
@@ -2272,7 +2320,7 @@ let rigDemoPhase = 'IDLE';
 let rigDemoPhaseStartMs = 0;
 
 rigDemoBtn.addEventListener('click', () => {
-  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE') return;
+  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE' || routeDemoPhase !== 'IDLE') return;
   setScenarioControlsEnabled(false);
   rigDemoBtn.textContent = '▶ Running…';
   rigMotionActive = true;
@@ -2346,7 +2394,7 @@ rigManualBtn.addEventListener('click', () => {
     setRigStateBox('PARKED', 'not running', 'var(--border)', 'transparent');
     return;
   }
-  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE') return;
+  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE' || routeDemoPhase !== 'IDLE') return;
   rigManualActive = true;
   rigMotionActive = true;
   setScenarioControlsEnabled(false);
@@ -2398,6 +2446,7 @@ function updateRigMotion(nowMs) {
   if (rigManualActive) updateRigManualDrive();
   if (drillPhase !== 'IDLE') updateDrillPattern(nowMs, rigDt);
   if (capacityDemoPhase !== 'IDLE') updateCapacityDemo(nowMs);
+  if (routeDemoPhase !== 'IDLE') updateRouteDemo(nowMs, rigDt);
 
   if (!rigMotionActive) { feedforwardTerm = 0; return; }
 
@@ -2518,7 +2567,7 @@ function normalizeAngle(a) {
 }
 
 drillPatternBtn.addEventListener('click', () => {
-  if (drillPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || capacityDemoPhase !== 'IDLE') return;
+  if (drillPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || capacityDemoPhase !== 'IDLE' || routeDemoPhase !== 'IDLE') return;
   setScenarioControlsEnabled(false);
   drillPatternBtn.textContent = '▶ Running…';
   rigMotionActive = true;
@@ -2670,7 +2719,7 @@ function setCapacityDemoStateBox(text, sub, color, bg) {
 }
 
 capacityDemoBtn.addEventListener('click', () => {
-  if (capacityDemoPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE') return;
+  if (capacityDemoPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE' || routeDemoPhase !== 'IDLE') return;
   setScenarioControlsEnabled(false);
   capacityDemoBtn.textContent = '▶ Running…';
   rigMotionActive = true;
@@ -2838,7 +2887,7 @@ function setTourStateBox(text, sub, color, bg) {
 }
 
 tourBtn.addEventListener('click', () => {
-  if (tourPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE') return;
+  if (tourPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE' || routeDemoPhase !== 'IDLE') return;
   tourBtn.textContent = '⏸ Touring…';
   tourPhase = 'RUNNING';
   tourStepIndex = 0;
@@ -2878,6 +2927,161 @@ function updateGuidedTour(nowMs) {
     tourStepIndex = 0;
     tourBtn.textContent = '▶ Start Guided Tour';
     setTourStateBox('IDLE', 'not running', 'var(--border)', 'transparent');
+  }
+}
+
+// ---------- Combined Route Demo (2026-08-10) ----------
+// Reuses three existing systems rather than building a fourth movement
+// model: the Drill Pattern demo's own turn-to-bearing/tram-to-arrival
+// waypoint nav (same DRILL_TURN_DONE_RAD/DRILL_ARRIVE_DIST tolerances,
+// same point-turn asymmetry, same normalizeAngle helper), the REAL
+// Obstacle Snag scenario triggered in place exactly the way the Guided
+// Tour triggers it (obstacleSnagBtn.click(), waited on via snagPhase),
+// and the drill-bit lower/hold/raise cycle from that same Drill Pattern
+// demo (same drillBit/DRILL_BIT_UP_Y/DOWN_Y).
+const ROUTE_OBSTACLE_TRIGGER_DIST = 0.4; // world units from the obstacle's own position -- inside this, the route pauses for the snag interlude
+const ROUTE_LOWER_MS = 700, ROUTE_HOLD_MS = 500, ROUTE_RAISE_MS = 700, ROUTE_DONE_MS = 1200;
+// Wide enough to keep the rig's start, the obstacle, and the final hole
+// all in frame at once -- the route between them is a long diagonal leg,
+// not the tight single-area layouts the other demos' default views assume.
+const ROUTE_CAMERA_VIEW = { azimuth: 0.3, elevation: 1.2, radius: 6.0, target: new THREE.Vector3(0.25, 0.2, -0.6) };
+
+let routeDemoPhase = 'IDLE'; // IDLE | TURN | TRAM | SNAG | LOWER | HOLD | RAISE | DONE
+let routeDemoPhaseStartMs = 0;
+let routeSnagTriggered = false; // one-shot -- don't re-trigger on the resumed leg past the obstacle
+
+const routeDemoBtn = document.getElementById('routeDemoBtn');
+const routeDemoDistValEl = document.getElementById('routeDemoDistVal');
+const routeDemoSnagValEl = document.getElementById('routeDemoSnagVal');
+const routeDemoStateEl = document.getElementById('routeDemoState');
+const routeDemoStateTextEl = document.getElementById('routeDemoStateText');
+const routeDemoStateSubEl = document.getElementById('routeDemoStateSub');
+
+function setRouteStateBox(text, sub, color, bg) {
+  routeDemoStateTextEl.textContent = text;
+  routeDemoStateSubEl.textContent = sub;
+  routeDemoStateEl.style.borderColor = color;
+  routeDemoStateEl.style.background = bg;
+}
+
+routeDemoBtn.addEventListener('click', () => {
+  if (routeDemoPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE' || tourPhase !== 'IDLE') return;
+  setScenarioControlsEnabled(false);
+  routeDemoBtn.textContent = '▶ Running…';
+  rigMotionActive = true;
+  routeSnagTriggered = false;
+  routeHoleMarker.visible = false;
+  routeDemoSnagValEl.textContent = 'not yet';
+
+  azimuth = ROUTE_CAMERA_VIEW.azimuth;
+  elevation = ROUTE_CAMERA_VIEW.elevation;
+  radius = ROUTE_CAMERA_VIEW.radius;
+  target.copy(ROUTE_CAMERA_VIEW.target);
+  updateCamera();
+  draw();
+
+  routeDemoPhase = 'TURN';
+  routeDemoPhaseStartMs = performance.now();
+});
+
+// Called from updateRigMotion() every frame the route demo is running,
+// same spot/contract updateDrillPattern already has.
+function updateRouteDemo(nowMs, rigDt) {
+  const elapsedMs = nowMs - routeDemoPhaseStartMs;
+  const dx = ROUTE_FINAL_HOLE.x - rigGroup.position.x;
+  const dz = ROUTE_FINAL_HOLE.z - rigGroup.position.z;
+  const dist = Math.hypot(dx, dz);
+  routeDemoDistValEl.textContent = (routeDemoPhase === 'TURN' || routeDemoPhase === 'TRAM') ? `${dist.toFixed(2)} u` : '0.00 u';
+
+  if (routeDemoPhase === 'TURN') {
+    const desiredYaw = Math.atan2(dx, dz);
+    const err = normalizeAngle(desiredYaw - rigYaw);
+    if (Math.abs(err) > DRILL_TURN_DONE_RAD) {
+      if (err > 0) { leftTrackSpeed = -MAX_TRACK_SPEED * 0.97; rightTrackSpeed = MAX_TRACK_SPEED; }
+      else { leftTrackSpeed = MAX_TRACK_SPEED; rightTrackSpeed = -MAX_TRACK_SPEED * 0.97; }
+      setRouteStateBox('TURNING', `heading error ${THREE.MathUtils.radToDeg(err).toFixed(1)}°`, 'var(--warn)', 'rgba(226,87,76,0.12)');
+    } else {
+      leftTrackSpeed = rightTrackSpeed = 0;
+      routeDemoPhase = 'TRAM';
+    }
+
+  } else if (routeDemoPhase === 'TRAM') {
+    // Obstacle proximity is checked BEFORE arrival, so passing near it on
+    // the way in triggers the interlude instead of trying to arrive first.
+    const obDist = Math.hypot(rigGroup.position.x - obstacleMesh.position.x, rigGroup.position.z - obstacleMesh.position.z);
+    if (!routeSnagTriggered && obDist <= ROUTE_OBSTACLE_TRIGGER_DIST) {
+      leftTrackSpeed = rightTrackSpeed = 0;
+      routeSnagTriggered = true;
+      // Hand deflection control to the Obstacle Snag scenario's own script
+      // for the duration -- if rigMotionActive stayed true, updateRigMotion's
+      // geometry fall-through (further down, still in the same function)
+      // would immediately overwrite whatever the snag scenario just set,
+      // the exact reason those two are normally mutually exclusive.
+      rigMotionActive = false;
+      routeDemoSnagValEl.textContent = 'triggered';
+      obstacleSnagBtn.click();
+      routeDemoPhase = 'SNAG';
+      routeDemoPhaseStartMs = nowMs;
+      return;
+    }
+    if (dist > DRILL_ARRIVE_DIST) {
+      leftTrackSpeed = rightTrackSpeed = MAX_TRACK_SPEED;
+      setRouteStateBox('TRAMMING', `${dist.toFixed(2)} u to the hole`, 'var(--accent)', 'rgba(79,143,240,0.12)');
+    } else {
+      leftTrackSpeed = rightTrackSpeed = 0;
+      routeDemoPhase = 'LOWER';
+      routeDemoPhaseStartMs = nowMs;
+    }
+
+  } else if (routeDemoPhase === 'SNAG') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setRouteStateBox('CABLE CAUGHT', 'Obstacle Snag scenario running in place…', 'var(--warn)', 'rgba(226,87,76,0.12)');
+    if (snagPhase === 'IDLE') {
+      rigMotionActive = true; // hand deflection back to geometry now that the nested scenario is done
+      routeDemoSnagValEl.textContent = 'cleared';
+      routeDemoPhase = 'TURN'; // re-affirm heading (the rig may be a hair off after sitting through the snag) then resume toward the hole
+      routeDemoPhaseStartMs = nowMs;
+    }
+
+  } else if (routeDemoPhase === 'LOWER') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    const t = Math.min(1, elapsedMs / ROUTE_LOWER_MS);
+    const eased = t * t * (3 - 2 * t);
+    drillBit.position.y = DRILL_BIT_UP_Y + (DRILL_BIT_DOWN_Y - DRILL_BIT_UP_Y) * eased;
+    setRouteStateBox('DRILLING', 'lowering bit', 'var(--warn)', 'rgba(226,87,76,0.12)');
+    if (t >= 1) { routeDemoPhase = 'HOLD'; routeDemoPhaseStartMs = nowMs; }
+
+  } else if (routeDemoPhase === 'HOLD') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setRouteStateBox('DRILLING', 'holding at depth', 'var(--warn)', 'rgba(226,87,76,0.12)');
+    if (elapsedMs >= ROUTE_HOLD_MS) { routeDemoPhase = 'RAISE'; routeDemoPhaseStartMs = nowMs; }
+
+  } else if (routeDemoPhase === 'RAISE') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    const t = Math.min(1, elapsedMs / ROUTE_RAISE_MS);
+    const eased = t * t * (3 - 2 * t);
+    drillBit.position.y = DRILL_BIT_DOWN_Y + (DRILL_BIT_UP_Y - DRILL_BIT_DOWN_Y) * eased;
+    setRouteStateBox('RETRACTING', 'raising bit', 'var(--good)', 'rgba(79,191,122,0.12)');
+    if (t >= 1) {
+      drillBit.position.y = DRILL_BIT_UP_Y;
+      routeHoleMarker.visible = true;
+      routeDemoPhase = 'DONE';
+      routeDemoPhaseStartMs = nowMs;
+    }
+
+  } else if (routeDemoPhase === 'DONE') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setRouteStateBox('ROUTE COMPLETE', 'obstacle cleared, hole drilled', 'var(--good)', 'rgba(79,191,122,0.12)');
+    if (elapsedMs >= ROUTE_DONE_MS) {
+      routeDemoPhase = 'IDLE';
+      rigMotionActive = false;
+      a0Deg.value = 0;
+      a1Deg.value = 0;
+      render();
+      routeDemoBtn.textContent = '▶ Run Combined Route Demo';
+      setScenarioControlsEnabled(true);
+      setRouteStateBox('IDLE', 'not running', 'var(--border)', 'transparent');
+    }
   }
 }
 
