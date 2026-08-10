@@ -263,6 +263,83 @@
         <span><span class="dot" style="background:#5a6473"></span>Reel barrel</span>
         <span><span class="dot" style="background:#cfd4da"></span>Cable on the ground</span>
       </div>
+
+      <button id="cldToggleBtn" style="width:100%;">&#9660; Show control logic diagram</button>
+      <div id="controlDiagramPanel" class="axis-block" style="display:none; margin-bottom:0;">
+        <div class="axis-title" style="margin-bottom:2px;">
+          Control logic diagram <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; live, updates every frame</span>
+        </div>
+        <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+          Same reference architecture as the real system: sensors &rarr; deflection computer &rarr;
+          tension computer &rarr; motor controller &rarr; motor, with velocity and cable-length
+          feedback running back the other way. Every value is read from the exact same state the
+          rest of this page uses, nothing here is a separate calculation. An arrow briefly glows
+          when the value it carries changes meaningfully &mdash; watch it during a preset or the
+          Obstacle Snag scenario to see data actually moving through the chain.
+        </div>
+        <svg id="cldSvg" viewBox="0 0 950 245" style="width:100%; height:auto; display:block; overflow:visible;">
+          <defs>
+            <marker id="cldArrowHead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M0,0 L10,5 L0,10 Z" fill="#9aa4b1"></path>
+            </marker>
+          </defs>
+
+          <!-- Boxes -->
+          <g style="fill:var(--panel-2); stroke:var(--border); stroke-width:1;">
+            <rect x="20" y="65" width="150" height="70" rx="6"></rect>
+            <rect x="210" y="65" width="150" height="70" rx="6"></rect>
+            <rect x="400" y="65" width="150" height="70" rx="6"></rect>
+            <rect x="590" y="65" width="150" height="70" rx="6"></rect>
+            <rect x="780" y="65" width="150" height="70" rx="6"></rect>
+          </g>
+          <g style="fill:var(--text); font-size:10.5px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
+            <text x="95" y="95">Deflection</text>
+            <text x="95" y="110">Measurement Device</text>
+            <text x="285" y="95">Deflection System</text>
+            <text x="285" y="110">Computer</text>
+            <text x="475" y="95">Tension Control</text>
+            <text x="475" y="110">Computer</text>
+            <text x="665" y="95">Cable Reel Motor</text>
+            <text x="665" y="110">Controller</text>
+            <text x="855" y="95">Cable Reel</text>
+            <text x="855" y="110">Motor</text>
+          </g>
+          <text id="cldTensionVal" x="475" y="127" style="fill:var(--text-dim); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">tension 0%</text>
+
+          <!-- Forward signal path: DMD -> DSC -> TCC -> CRMC -> CRM -->
+          <g style="stroke:#9aa4b1; stroke-width:2; fill:none;">
+            <line id="cldLine1" x1="170" y1="100" x2="208" y2="100" marker-end="url(#cldArrowHead)"></line>
+            <line id="cldLine2" x1="360" y1="100" x2="398" y2="100" marker-end="url(#cldArrowHead)"></line>
+            <line id="cldLine3" x1="550" y1="100" x2="588" y2="100" marker-end="url(#cldArrowHead)"></line>
+            <line id="cldLine4" x1="740" y1="100" x2="778" y2="100" marker-end="url(#cldArrowHead)"></line>
+          </g>
+          <g style="fill:var(--text-dim); font-size:8px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
+            <text x="190" y="32">Data of 2 Angle Sensors</text>
+            <text x="380" y="32">Resulting Deflection Data</text>
+            <text x="570" y="32">Speed/Torque Setpoints</text>
+            <text x="760" y="32">Motor Commands</text>
+          </g>
+          <g style="fill:var(--accent); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">
+            <text id="cldSensorVal" x="190" y="50">X 0.0&deg; &middot; Y 0.0&deg;</text>
+            <text id="cldFusedVal" x="380" y="50">mag 0 &middot; dir 0&deg;</text>
+            <text id="cldSetpointVal" x="570" y="50">ctrl 0.000 &middot; duty 0%</text>
+            <text id="cldCommandVal" x="760" y="50">HOLD &middot; 0%</text>
+          </g>
+
+          <!-- Feedback: CRM -> CRMC (Velocity Data), CRMC -> TCC (Cable Length Data) -->
+          <path id="cldLineVel" d="M 855,135 L 855,165 L 680,165 L 680,135" marker-end="url(#cldArrowHead)" style="stroke:#9aa4b1; stroke-width:2; fill:none;"></path>
+          <path id="cldLineLen" d="M 650,135 L 650,205 L 475,205 L 475,135" marker-end="url(#cldArrowHead)" style="stroke:#9aa4b1; stroke-width:2; fill:none;"></path>
+          <g style="fill:var(--text-dim); font-size:8px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
+            <text x="767" y="155">Velocity Data</text>
+            <text x="562" y="195">Cable Length Data</text>
+          </g>
+          <g style="fill:var(--accent-2); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">
+            <text id="cldVelocityVal" x="767" y="180">0.00 RPM</text>
+            <text id="cldLengthVal" x="562" y="220">0.00 u</text>
+          </g>
+        </svg>
+      </div>
+
       <table>
         <thead>
           <tr><th>Axis</th><th>Adjusted deg</th><th>Raw counts</th><th>Per mille, pre deadzone</th><th>Deadzone</th><th>Published vector</th></tr>
@@ -2039,6 +2116,104 @@ document.getElementById('stickyReelBadge').addEventListener('click', () => {
 const payoutValEl = document.getElementById('payoutVal');
 const maxPayoutInput = document.getElementById('maxPayout');
 
+// ---------- Control logic diagram (2026-08-09) ----------
+// Toggleable 2D SVG overlay (plain DOM, not a Three.js scene object) showing
+// the reference signal chain: Deflection Measurement Device -> Deflection
+// System Computer -> Tension Control Computer -> Cable Reel Motor Controller
+// -> Cable Reel Motor, with Velocity Data and Cable Length Data feeding back
+// the other way. Every readout below is pulled from state that already
+// exists elsewhere in this file (a0Deg/a1Deg, currentVX/currentVY,
+// controllerValue, drumOmega, snagPhase/snagTensionPct, tension) -- this
+// panel doesn't compute anything new, it just visualizes the existing chain.
+const cldToggleBtn = document.getElementById('cldToggleBtn');
+const controlDiagramPanel = document.getElementById('controlDiagramPanel');
+cldToggleBtn.addEventListener('click', () => {
+  const showing = controlDiagramPanel.style.display !== 'none';
+  controlDiagramPanel.style.display = showing ? 'none' : 'block';
+  cldToggleBtn.innerHTML = showing ? '&#9660; Show control logic diagram' : '&#9650; Hide control logic diagram';
+});
+
+const cldTensionValEl = document.getElementById('cldTensionVal');
+const cldSensorValEl = document.getElementById('cldSensorVal');
+const cldFusedValEl = document.getElementById('cldFusedVal');
+const cldSetpointValEl = document.getElementById('cldSetpointVal');
+const cldCommandValEl = document.getElementById('cldCommandVal');
+const cldVelocityValEl = document.getElementById('cldVelocityVal');
+const cldLengthValEl = document.getElementById('cldLengthVal');
+
+// One flash-tracking record per arrow: remembers the last numeric value seen
+// so a "meaningful change" (beyond a per-channel noise threshold) can be
+// detected and turned into a brief glow, decaying back to the resting style
+// over FLASH_MS -- rather than flashing on every frame's floating-point
+// jitter, or needing any state beyond "when did this last meaningfully move."
+const FLASH_MS = 500;
+const CLD_NEUTRAL = '#9aa4b1'; // matches --text-dim, the resting arrow color
+const CLD_FLASH = '#4f8ff0';   // matches --accent
+function makeCldChannel(el, threshold) {
+  return { el, threshold, lastValue: null, flashUntil: 0 };
+}
+const cldChannels = {
+  sensors: makeCldChannel(document.getElementById('cldLine1'), 0.3),
+  fused: makeCldChannel(document.getElementById('cldLine2'), 4),
+  setpoint: makeCldChannel(document.getElementById('cldLine3'), 0.01),
+  command: makeCldChannel(document.getElementById('cldLine4'), 0.5),
+  velocity: makeCldChannel(document.getElementById('cldLineVel'), 0.05),
+  length: makeCldChannel(document.getElementById('cldLineLen'), 0.002),
+};
+function cldTouch(ch, value, nowMs) {
+  if (ch.lastValue === null || Math.abs(value - ch.lastValue) > ch.threshold) {
+    ch.flashUntil = nowMs + FLASH_MS;
+  }
+  ch.lastValue = value;
+}
+function cldPaintChannel(ch, nowMs) {
+  const t = Math.max(0, Math.min(1, (ch.flashUntil - nowMs) / FLASH_MS));
+  ch.el.style.strokeWidth = (2 + 3 * t).toFixed(2);
+  ch.el.style.stroke = t <= 0 ? CLD_NEUTRAL : CLD_FLASH;
+  ch.el.style.filter = t > 0 ? `drop-shadow(0 0 ${(4 * t).toFixed(1)}px ${CLD_FLASH})` : 'none';
+}
+
+// Called from stepReelTrim() every frame, after it computes command/
+// dutyPercent/payoutLength -- everything else it needs (currentVX/
+// currentVY, controllerValue, drumOmega, snagPhase/snagTensionPct) is
+// already module-level state updated elsewhere this same frame.
+function updateControlDiagram(command, dutyPercent, payoutLength) {
+  if (controlDiagramPanel.style.display === 'none') return; // skip the work entirely while hidden
+  const nowMs = performance.now();
+
+  const a0 = parseFloat(a0Deg.value), a1 = parseFloat(a1Deg.value);
+  cldSensorValEl.textContent = `X ${a0.toFixed(1)}° · Y ${a1.toFixed(1)}°`;
+  cldTouch(cldChannels.sensors, Math.abs(a0) + Math.abs(a1), nowMs);
+
+  const mag = Math.sqrt(currentVX * currentVX + currentVY * currentVY);
+  const dir = Math.atan2(currentVY, currentVX) * 180 / Math.PI;
+  cldFusedValEl.textContent = `mag ${mag.toFixed(0)} · dir ${dir.toFixed(0)}°`;
+  cldTouch(cldChannels.fused, mag, nowMs);
+
+  cldSetpointValEl.textContent = `ctrl ${controllerValue.toFixed(3)} · duty ${dutyPercent.toFixed(0)}%`;
+  cldTouch(cldChannels.setpoint, controllerValue, nowMs);
+
+  cldCommandValEl.textContent = `${command} · ${dutyPercent.toFixed(0)}%`;
+  const commandSigned = command === 'REEL IN' ? -dutyPercent : dutyPercent; // signed so HOLD<->UNREEL<->REEL IN all read as real magnitude changes, not just duty ties
+  cldTouch(cldChannels.command, commandSigned, nowMs);
+
+  const drumRpm = drumOmega * 60 / (2 * Math.PI);
+  cldVelocityValEl.textContent = `${drumRpm.toFixed(2)} RPM`;
+  cldTouch(cldChannels.velocity, drumRpm, nowMs);
+
+  cldLengthValEl.textContent = `${payoutLength.toFixed(2)} u`;
+  cldTouch(cldChannels.length, payoutLength, nowMs);
+
+  // Tension: the Obstacle Snag scenario's own proxy takes priority while
+  // it's running (that's the more meaningful number in that moment), same
+  // priority order the scenario itself already uses when it disables
+  // tension-drive on start.
+  const tensionNow = snagPhase !== 'IDLE' ? snagTensionPct : parseFloat(tension.value);
+  cldTensionValEl.textContent = `tension ${tensionNow.toFixed(0)}%`;
+
+  Object.values(cldChannels).forEach(ch => cldPaintChannel(ch, nowMs));
+}
+
 // ---------- Capacity interlock DOM + state (2026-08-04) ----------
 const turnsValEl = document.getElementById('turnsVal');
 const layerValEl = document.getElementById('layerVal');
@@ -2307,6 +2482,7 @@ function stepReelTrim() {
   groundCable.position.x = BARREL_POS.x + payoutLength / 2;
   payoutValEl.value = payoutLength.toFixed(2) + ' u';
   updateHangingCable(payoutLength, snagPhase, cableWrapFactor);
+  updateControlDiagram(command, dutyPercent, payoutLength);
   const capacityPct = 100 * spooledLengthM / DRUM_L_MAX_M;
   const currentLayer = Math.floor(turnsRemaining / WRAPS_PER_LAYER);
 
