@@ -1351,6 +1351,33 @@ scene.add(powerSupplyAnchorMesh);
 const SUPPLY_CABLE_SLACK_PER_PAYOUT = 0.1;
 const SUPPLY_CABLE_MAX_SAG = 0.6;
 const SUPPLY_CABLE_RADIUS = 0.022;
+// ---------- Tension-driven sag stiffness + feed marks (2026-08-09) ----------
+// Live here (not down with the rest of the tension/whip state near
+// drumOmega) because updateHangingCable()'s ONE-TIME synchronous initial
+// call sits just below maxPayoutInput's declaration, well before the drum
+// inertia section -- these three are read directly inside
+// updateHangingCable()/updateCableMarks() themselves, so they have to exist
+// by then. (The rest of the tension/whip/marks state is only ever read
+// inside stepReelTrim(), which doesn't run until the first rAF tick, long
+// after the whole script has finished executing top to bottom -- no
+// ordering constraint there.)
+// Higher tension pulls the hanging curve straighter (less sag), lower
+// tension lets it droop more -- clamped on both ends so the cable never
+// renders perfectly rigid (>= MIN_FACTOR of its natural sag at 100%
+// tension) or blows out to unreadable slack (capped at MAX_FACTOR at 0%
+// tension, on top of the absolute SUPPLY_CABLE_MAX_SAG cap just above).
+const CABLE_SAG_MIN_FACTOR = 0.25;
+const CABLE_SAG_MAX_FACTOR = 1.6;
+// Fixed real-world spacing for the scrolling feed-marks bands (see
+// updateCableMarks below) -- band width stays constant regardless of how
+// long the free cable run currently is. cableFeedPhase is the accumulated
+// feed-length offset stepReelTrim() updates every frame from drumOmega;
+// declared here (read directly inside updateHangingCable/updateCableMarks
+// below, not passed as a parameter) rather than down with the rest of the
+// tension/whip state, for the same early-initial-call reason as
+// CABLE_SAG_MIN_FACTOR/MAX_FACTOR above.
+const CABLE_MARK_SPACING_UNITS = 0.14;
+let cableFeedPhase = 0;
 // Bumped from 24 (2026-08-09): the tube now spans the full power-supply ->
 // gimbal -> mounting -> barrel-spiral path, not just the short sag segment,
 // and the spiral alone can be tens of scene-units of arc length once mostly
@@ -1375,6 +1402,10 @@ function buildTubeGeometry(tubularSegments, radialSegments) {
   const vertCount = (tubularSegments + 1) * ringVerts;
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3));
+  // Defaults to solid white (1,1,1) -- multiplies against the material's own
+  // base color with no visual change until updateCableMarks() below starts
+  // painting the scrolling feed-marks pattern into it.
+  geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(vertCount * 3).fill(1), 3));
   const uvs = new Float32Array(vertCount * 2);
   let uvIdx = 0;
   for (let i = 0; i <= tubularSegments; i++) {
@@ -1421,8 +1452,41 @@ function updateTubeFromCurve(geometry, curve, tubularSegments, radius, radialSeg
   geometry.computeVertexNormals();
 }
 
+// Paints a periodic band pattern into `geometry`'s vertex colors, spanning
+// only the FREE portion of the path (arc-length fraction 0..freeFraction --
+// everything before the wound spiral; the spiral is left plain white since
+// the barrel's own rotation already shows movement there). Fixed real-world
+// band spacing (CABLE_MARK_SPACING_UNITS) rather than a fixed segment
+// count, so bands read as constant-width regardless of how long the free
+// run currently is. `feedPhase` is an accumulated LENGTH (see
+// stepReelTrim's cableFeedPhase), so the pattern visibly scrolls in the
+// direction and at the speed cable is actually feeding, and sits static at
+// HOLD -- requirement 3's "direction and speed visible at a glance."
+function updateCableMarks(geometry, curve, tubularSegments, radialSegments, freeFraction, feedPhase) {
+  const colorAttr = geometry.attributes.color;
+  const ringVerts = radialSegments + 1;
+  const totalLen = curve.getLength();
+  for (let i = 0; i <= tubularSegments; i++) {
+    const t = i / tubularSegments;
+    let shade = 1;
+    if (t <= freeFraction) {
+      const arcLen = t * totalLen;
+      const wave = Math.sin(2 * Math.PI * (arcLen - feedPhase) / CABLE_MARK_SPACING_UNITS);
+      shade = wave > 0 ? 1 : 0.55;
+    }
+    for (let j = 0; j <= radialSegments; j++) {
+      colorAttr.setXYZ(i * ringVerts + j, shade, shade, shade);
+    }
+  }
+  colorAttr.needsUpdate = true;
+}
+
 const supplyCableGeo = buildTubeGeometry(SUPPLY_CABLE_TUBULAR_SEGMENTS, SUPPLY_CABLE_RADIAL_SEGMENTS);
-const supplyCableMesh = new THREE.Mesh(supplyCableGeo, cableMat); // reuses the same white/gray cable material as the gimbal-side cable
+// Own material, NOT the shared `cableMat` -- vertexColors needs a 'color'
+// geometry attribute to multiply against, which the short straight `cable`
+// cylinder (still using plain cableMat) doesn't have and doesn't need.
+const supplyCableMat = new THREE.MeshStandardMaterial({ color: 0xe6e8eb, roughness: 0.3, metalness: 0.1, vertexColors: true });
+const supplyCableMesh = new THREE.Mesh(supplyCableGeo, supplyCableMat);
 scene.add(supplyCableMesh);
 // Reused every frame below to avoid a fresh Vector3 allocation per call.
 const _supplyCableStart = new THREE.Vector3();
@@ -1443,8 +1507,13 @@ const _supplyCableMountWorld = new THREE.Vector3();
 // `phase` is the Obstacle Snag scenario's current phase string (declared
 // further down; 'IDLE' when not running) and `wrapFactor` (0-1, also set
 // there) is how strongly the curve should bias toward the obstacle, e.g.
-// 1 while fully caught during HOLD, easing to 0 as it releases.
-function updateHangingCable(payoutLength, phase, wrapFactor) {
+// 1 while fully caught during HOLD, easing to 0 as it releases. `tensionPct`
+// and `whipDisp` are the canonical tension/whip state stepReelTrim() just
+// computed this same frame (see that state block's own comment) -- passed
+// explicitly, same as payoutLength/phase/wrapFactor, rather than reaching
+// for the module-level variables directly, so this function's inputs stay
+// fully visible at the call site.
+function updateHangingCable(payoutLength, phase, wrapFactor, tensionPct, whipDisp) {
   scene.updateMatrixWorld(); // defensive -- cheap and idempotent if already current this frame
   hub.getWorldPosition(_supplyCableStart);
 
@@ -1469,11 +1538,24 @@ function updateHangingCable(payoutLength, phase, wrapFactor) {
 
   const d = _supplyCableStart.distanceTo(anchor);
   const slack = Math.max(0, SUPPLY_CABLE_SLACK_PER_PAYOUT * payoutLength);
-  const sagDepth = Math.min(SUPPLY_CABLE_MAX_SAG, Math.sqrt(Math.max(0, 3 * d * slack / 8)));
+  // Tension acts as a stiffness multiplier on the natural (payout-driven)
+  // sag: higher tension pulls the curve straighter, lower tension lets it
+  // droop more. Linearly interpolated and clamped between
+  // CABLE_SAG_MIN_FACTOR (100% tension -- still visibly a cable, never
+  // perfectly rigid) and CABLE_SAG_MAX_FACTOR (0% tension -- looser, but
+  // still bounded). tensionPct itself is already EMA-smoothed by
+  // stepReelTrim(), so this transitions gradually rather than snapping.
+  const tensionSagFactor = CABLE_SAG_MAX_FACTOR - (CABLE_SAG_MAX_FACTOR - CABLE_SAG_MIN_FACTOR) * (THREE.MathUtils.clamp(tensionPct, 0, 100) / 100);
+  const sagDepth = Math.min(SUPPLY_CABLE_MAX_SAG, Math.sqrt(Math.max(0, 3 * d * slack / 8)) * tensionSagFactor);
 
-  // Plain hanging-cable midpoint (straight-line chord, dipped down by sagDepth).
+  // Plain hanging-cable midpoint (straight-line chord, dipped down by
+  // sagDepth, plus the current whip displacement -- a brief damped
+  // oscillation kicked by abrupt reel-speed changes, see stepReelTrim's
+  // whip integration. Additive on top of the tension-scaled sag rather than
+  // its own separate curve, so it reads as the SAME cable briefly
+  // overshooting, not an unrelated wobble.
   _supplyCableSagPoint.copy(_supplyCableStart).add(anchor).multiplyScalar(0.5);
-  _supplyCableSagPoint.y -= sagDepth;
+  _supplyCableSagPoint.y -= sagDepth + whipDisp;
 
   // Blend toward a point just above the obstacle while wrapFactor > 0 --
   // this is what makes the cable visually catch on it during CATCH/HOLD
@@ -1553,6 +1635,9 @@ function updateHangingCable(payoutLength, phase, wrapFactor) {
   fullPath.add(helixCurve);
 
   updateTubeFromCurve(supplyCableGeo, fullPath, SUPPLY_CABLE_TUBULAR_SEGMENTS, SUPPLY_CABLE_RADIUS, SUPPLY_CABLE_RADIAL_SEGMENTS);
+  // Same free/wound split (1 - woundFraction) the spiral itself already
+  // uses just above -- not a second, independently-drifting boundary.
+  updateCableMarks(supplyCableGeo, fullPath, SUPPLY_CABLE_TUBULAR_SEGMENTS, SUPPLY_CABLE_RADIAL_SEGMENTS, 1 - woundFraction, cableFeedPhase);
 }
 
 // ---------- Reference axes (2026-07-24) ----------
@@ -2837,7 +2922,7 @@ const maxPayoutInput = document.getElementById('maxPayout');
 // maxPayoutInput (declared on the line just above -- NOT fine any
 // earlier; this was caught live as a real ReferenceError before landing
 // here).
-updateHangingCable(0, 'IDLE', 0);
+updateHangingCable(0, 'IDLE', 0, 0, 0); // tensionPct/whipDisp start at 0, same as cableTensionPct/cableWhipDisp's own initial values
 
 // ---------- Control logic diagram (2026-08-09) ----------
 // Toggleable 2D SVG overlay (plain DOM, not a Three.js scene object) showing
@@ -2927,12 +3012,12 @@ function updateControlDiagram(command, dutyPercent, payoutLength) {
   cldLengthValEl.textContent = `${payoutLength.toFixed(2)} u`;
   cldTouch(cldChannels.length, payoutLength, nowMs);
 
-  // Tension: the Obstacle Snag scenario's own proxy takes priority while
-  // it's running (that's the more meaningful number in that moment), same
-  // priority order the scenario itself already uses when it disables
-  // tension-drive on start.
-  const tensionNow = snagPhase !== 'IDLE' ? snagTensionPct : parseFloat(tension.value);
-  cldTensionValEl.textContent = `tension ${tensionNow.toFixed(0)}%`;
+  // Tension: the ONE canonical value (2026-08-09) -- deflection- and
+  // drum-speed-derived, with the Obstacle Snag scenario's own scripted
+  // spike layered on top -- computed once in stepReelTrim() and shared by
+  // the cable's own sag stiffness, so this readout matches what the 3D view
+  // is actually showing instead of an independent priority-ternary.
+  cldTensionValEl.textContent = `tension ${cableTensionPct.toFixed(0)}%`;
 
   Object.values(cldChannels).forEach(ch => cldPaintChannel(ch, nowMs));
 }
@@ -2983,6 +3068,53 @@ updateRearmLabel();
 let drumOmega = 0;
 let lastPhysicsTime = performance.now();
 const LBF_TO_N = 4.4482216;
+
+// ---------- Canonical cable tension + visual response state (2026-08-09) ----------
+// ONE tension value, computed once per frame in stepReelTrim() below and
+// read by everything that used to either invent its own (the control logic
+// diagram's old snagPhase-ternary) or not have one at all (the sag curve).
+// Base = deflection magnitude (how far the cable's being pulled off center,
+// from currentVX/currentVY -- already fed by every input path: sliders,
+// drag, presets, Obstacle Snag's own scripted deflection, Rig Motion, the
+// Drill Pattern demo) plus a smaller contribution from the drum's current
+// speed (a moving reel adds real dynamic loading on top of static pull).
+// snagTensionPct (the Obstacle Snag scenario's own scripted spike) is
+// layered ADDITIVELY on top rather than replacing the base -- so outside
+// HOLD (when the scripted spike is 0 or partial) the real geometry-driven
+// tension still shows through instead of snapping to 0.
+const CABLE_TENSION_EMA_GAIN = 0.12; // same smoothing style as rampedContribution's EMA_GAIN, slightly slower so the visual doesn't jitter frame to frame
+const CABLE_TENSION_DEFLECTION_WEIGHT = 0.75;
+const CABLE_TENSION_SPEED_WEIGHT = 0.25;
+let cableTensionPct = 0; // canonical, smoothed, 0-100 -- read by updateHangingCable (sag stiffness) and updateControlDiagram
+// CABLE_SAG_MIN_FACTOR/MAX_FACTOR live up near SUPPLY_CABLE_MAX_SAG (this
+// same file, cable-rendering constants section) -- updateHangingCable()
+// needs them for its ONE-TIME synchronous initial call, which runs before
+// this section (drum inertia state) would otherwise have executed.
+
+// Damped harmonic oscillator ("whip"): kicked whenever the reel command
+// (UNREEL/REEL IN/HOLD) transitions -- start, stop, or a direct reversal --
+// scaled by the drum's actual speed at that moment, so a fast reversal
+// whips harder than a gentle one. Free parameters chosen for a quick,
+// visibly springy settle (a few oscillations over well under a second),
+// not tuned against any real cable's actual mechanical properties.
+const CABLE_WHIP_STIFFNESS = 1200; // rad/s^2 per unit displacement
+const CABLE_WHIP_DAMPING = 8; // 1/s
+const CABLE_WHIP_KICK_BASE = 0.03; // scene units/s -- so even a stop-from-near-rest still visibly kicks
+const CABLE_WHIP_KICK_SCALE = 0.22; // scene units/s, scaled by current |drumOmega|/maxOmega on top of the base
+let cableWhipDisp = 0, cableWhipVel = 0;
+let lastReelCommand = 'HOLD';
+
+// Scrolling marks along the free (unwound) cable segment: a fixed-spacing
+// periodic pattern (vertex-colored bands, see updateCableMarks near
+// SUPPLY_CABLE_MAX_SAG, where CABLE_MARK_SPACING_UNITS and cableFeedPhase
+// itself also live for the same early-initial-call reason as
+// CABLE_SAG_MIN_FACTOR/MAX_FACTOR above -- updateHangingCable() reads
+// cableFeedPhase directly, not as a passed parameter) whose phase
+// accumulates from the real drumOmega, not a stylized constant, so both
+// direction (sign) and speed (magnitude) match actual reel/unreel motion.
+// Only spans the free segment -- the wound spiral already shows movement
+// via the barrel's own rotation each frame.
+const CABLE_MARK_SPEED_SCALE = 0.05; // illustrative rad/s -> scene-units/s conversion, not a real cable speed
 
 const origRender = render;
 render = function () {
@@ -3211,7 +3343,42 @@ function stepReelTrim() {
   groundCable.scale.x = Math.max(0.001, payoutLength);
   groundCable.position.x = BARREL_POS.x + payoutLength / 2;
   payoutValEl.value = payoutLength.toFixed(2) + ' u';
-  updateHangingCable(payoutLength, snagPhase, cableWrapFactor);
+
+  // ---------- Canonical cable tension (2026-08-09) ----------
+  // Base: deflection magnitude (currentVX/currentVY, already fused from
+  // whichever input is currently driving the gimbal) plus a smaller
+  // contribution from the drum's own speed fraction (a moving reel adds
+  // real dynamic load on top of static pull). snagTensionPct is layered
+  // additively on top, not swapped in -- see the state block's own comment
+  // above for why.
+  const deflectionMagPct = Math.min(100, Math.hypot(currentVX, currentVY) / 10);
+  const speedFracNow = maxOmega > 0 ? Math.min(1, Math.abs(drumOmega) / maxOmega) : 0;
+  const baseTensionPct = CABLE_TENSION_DEFLECTION_WEIGHT * deflectionMagPct + CABLE_TENSION_SPEED_WEIGHT * (speedFracNow * 100);
+  const cableTensionRaw = Math.max(0, Math.min(100, baseTensionPct + snagTensionPct));
+  cableTensionPct += (cableTensionRaw - cableTensionPct) * CABLE_TENSION_EMA_GAIN;
+
+  // ---------- Whip: damped oscillator, kicked on command transitions ----------
+  // command !== lastReelCommand catches start (HOLD->driven), stop
+  // (driven->HOLD), and reversal (UNREEL<->REEL IN) alike -- exactly the
+  // three cases the ask calls out -- without needing a separate
+  // delta-omega threshold that inertia would otherwise smear out over
+  // several frames.
+  if (command !== lastReelCommand) {
+    const cmdSign = { 'REEL IN': 1, 'UNREEL': -1, 'HOLD': 0 };
+    const kickDir = cmdSign[command] - cmdSign[lastReelCommand];
+    cableWhipVel += Math.sign(kickDir || 1) * (CABLE_WHIP_KICK_BASE + speedFracNow * CABLE_WHIP_KICK_SCALE);
+    lastReelCommand = command;
+  }
+  cableWhipVel += -CABLE_WHIP_STIFFNESS * cableWhipDisp * dt;
+  cableWhipVel *= Math.max(0, 1 - CABLE_WHIP_DAMPING * dt);
+  cableWhipDisp += cableWhipVel * dt;
+
+  // ---------- Scrolling feed-marks phase ----------
+  // Signed by drumOmega directly, so REEL IN and UNREEL scroll opposite
+  // directions and HOLD leaves the pattern static -- see updateCableMarks.
+  cableFeedPhase += drumOmega * CABLE_MARK_SPEED_SCALE * dt;
+
+  updateHangingCable(payoutLength, snagPhase, cableWrapFactor, cableTensionPct, cableWhipDisp);
   updateControlDiagram(command, dutyPercent, payoutLength);
   const capacityPct = 100 * spooledLengthM / DRUM_L_MAX_M;
   const currentLayer = Math.floor(turnsRemaining / WRAPS_PER_LAYER);
