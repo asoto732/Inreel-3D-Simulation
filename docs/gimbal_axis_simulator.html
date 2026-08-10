@@ -227,6 +227,39 @@
             <div id="drillStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
           </div>
         </div>
+
+        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+          <div class="axis-title" style="margin-bottom:8px;">
+            Capacity Interlock Stress <span class="adv-tag" style="margin-left:0;">scripted</span>
+          </div>
+          <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+            Trams away from the power supply -- same track-speed/tram model
+            as the Rig Motion Demo above -- driven until the capacity
+            interlock (see the Tramming interlock panel below) actually
+            trips, not for a fixed duration, using the same real deflection/
+            reel-command pipeline every other demo already drives. Then
+            holds so TRAM BLOCKED is clearly visible. Starts by preloading
+            spooled capacity just above the current block threshold (read
+            live from that panel's own inputs) so depleting it stays short
+            instead of needing a full drum. Restoring is paced rather than
+            chasing the real pipeline the same way: real REEL IN only
+            engages once the rig has tram'd almost all the way back to the
+            supply's own position, which is both a long trip and, measured
+            live, occasionally hangs the tab -- so the return tram is
+            cosmetic and capacity eases back up over a fixed window instead.
+          </div>
+          <button id="capacityDemoBtn" style="width:100%; margin-top:0;">&#9654; Run Capacity Interlock Stress Demo</button>
+
+          <div class="two-col" style="margin-top:12px;">
+            <div class="field"><label style="margin:0">Capacity <span class="val" id="capacityDemoPctVal">0.0%</span></label></div>
+            <div class="field"><label style="margin:0">Block / rearm at <span class="val" id="capacityDemoThreshVal">20.0% / 22.0%</span></label></div>
+          </div>
+
+          <div id="capacityDemoState" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; transition:background .1s, border-color .1s;">
+            <div id="capacityDemoStateText" style="font-size:16px; font-weight:600; letter-spacing:0.05em; font-family:var(--mono);">IDLE</div>
+            <div id="capacityDemoStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
+          </div>
+        </div>
       </details>
 
       <details class="axis-block" style="border-left-color:#4f8ff0;">
@@ -2037,11 +2070,12 @@ function setScenarioControlsEnabled(enabled) {
   scenarioBtnEls.forEach(b => b.disabled = !enabled);
   obstacleSnagBtn.disabled = !enabled;
   // Rig Motion Demo's own buttons too -- only one script (Obstacle Snag,
-  // Rig Motion scripted/manual, or the Drill Pattern demo) should ever own
-  // a0Deg/a1Deg at a time.
+  // Rig Motion scripted/manual, the Drill Pattern demo, or the Capacity
+  // Interlock Stress demo) should ever own a0Deg/a1Deg at a time.
   rigDemoBtn.disabled = !enabled;
   rigManualBtn.disabled = !enabled;
   drillPatternBtn.disabled = !enabled;
+  capacityDemoBtn.disabled = !enabled;
   a0Deg.disabled = !enabled;
   a1Deg.disabled = !enabled ? true : tensionDrive.checked; // a1Deg's disabled state is otherwise owned by tensionDrive
 }
@@ -2195,7 +2229,7 @@ let rigDemoPhase = 'IDLE';
 let rigDemoPhaseStartMs = 0;
 
 rigDemoBtn.addEventListener('click', () => {
-  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE') return;
+  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE') return;
   setScenarioControlsEnabled(false);
   rigDemoBtn.textContent = '▶ Running…';
   rigMotionActive = true;
@@ -2269,7 +2303,7 @@ rigManualBtn.addEventListener('click', () => {
     setRigStateBox('PARKED', 'not running', 'var(--border)', 'transparent');
     return;
   }
-  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || drillPhase !== 'IDLE') return;
+  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || drillPhase !== 'IDLE' || capacityDemoPhase !== 'IDLE') return;
   rigManualActive = true;
   rigMotionActive = true;
   setScenarioControlsEnabled(false);
@@ -2320,6 +2354,7 @@ function updateRigMotion(nowMs) {
   if (rigDemoPhase !== 'IDLE') updateRigDemoScript(nowMs);
   if (rigManualActive) updateRigManualDrive();
   if (drillPhase !== 'IDLE') updateDrillPattern(nowMs, rigDt);
+  if (capacityDemoPhase !== 'IDLE') updateCapacityDemo(nowMs);
 
   if (!rigMotionActive) { feedforwardTerm = 0; return; }
 
@@ -2440,7 +2475,7 @@ function normalizeAngle(a) {
 }
 
 drillPatternBtn.addEventListener('click', () => {
-  if (drillPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive) return;
+  if (drillPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || capacityDemoPhase !== 'IDLE') return;
   setScenarioControlsEnabled(false);
   drillPatternBtn.textContent = '▶ Running…';
   rigMotionActive = true;
@@ -2538,6 +2573,172 @@ function updateDrillPattern(nowMs, rigDt) {
 
   drillHoleValEl.textContent = `${Math.min(drillHoleIndex + 1, DRILL_HOLES.length)} / ${DRILL_HOLES.length}`;
   drillDistValEl.textContent = (drillPhase === 'TURN' || drillPhase === 'TRAM') ? `${dist.toFixed(2)} u` : '0.00 u';
+}
+
+// ---------- Capacity Interlock Stress demo (2026-08-10) ----------
+// Not a new movement or interlock system -- trams away from/back toward
+// the power supply using the exact same track-speed model and directions
+// the Rig Motion Demo's FORWARD/BACKWARD phases already use (away biases
+// UNREEL via feedforward, back biases REEL IN, both through the real
+// deflection/reel-trim pipeline, unchanged), just gated on the REAL
+// capacity interlock (trammingBlocked, computed further down in
+// stepReelTrim from turnsRemaining/capacityPct) tripping and clearing
+// instead of a fixed duration or a waypoint arrival.
+// Measured live: geometry-derived deflection saturates near its ceiling
+// (a1 ~86 deg) after well under a scene-unit of tram, but the resulting
+// duty cycle only lands around ~19% (Y contribution doesn't reach the
+// controller's own saturation point at that angle), so depleting even a
+// modest percentage of a 359m-capacity drum at that rate takes real
+// seconds, not a couple of tram-phase durations. Sized DEPLETE/RESTORE
+// around that measured rate rather than guessed.
+const CAPACITY_DEMO_START_BUFFER_PCT = 3; // starting capacity = block% + this, read live so tweaking that input before running changes the run too
+const CAPACITY_DEMO_TRAM_MS = 1000; // how long DEPLETE's tracks actually move -- deflection is already saturated well before this elapses, so tramming further only pushes the rig off-grid for no benefit; tracks then stop while DEPLETE keeps waiting on the real capacity/interlock state
+const CAPACITY_DEMO_BLOCKED_HOLD_MS = 1800; // long enough to clearly read TRAM BLOCKED before restoring
+// RESTORE is NOT the DEPLETE pattern mirrored -- measured live that real
+// REEL IN doesn't engage from parked (or even briefly-moving) deflection
+// the way parked UNREEL does; it only kicks in once the rig has tram'd
+// almost all the way back to the supply's own position, which is both a
+// slow, far-off-grid trip and, once, triggered an honest-to-goodness
+// browser hang chasing it. RESTORE instead trams back for the same bounded
+// CAPACITY_DEMO_TRAM_MS (so the motion still reads as "returning") while
+// directly easing capacity back up over a fixed window -- paced, bounded,
+// not chasing an emergent threshold.
+const CAPACITY_DEMO_RESTORE_MS = 2600;
+const CAPACITY_DEMO_RESTORE_OVERSHOOT_PCT = 2; // restore target = rearm threshold + this, so it clears with a bit of headroom rather than landing exactly on the boundary
+const CAPACITY_DEMO_CLEARED_MS = 1200;
+const CAPACITY_DEMO_SAFETY_MS = 20000; // DEPLETE-only cutoff in case the thresholds are configured unreachably (e.g. block% = 0) -- keeps that phase from waiting forever rather than actually fixing that case
+
+let capacityDemoPhase = 'IDLE'; // IDLE | DEPLETE | BLOCKED_HOLD | RESTORE | CLEARED
+let capacityDemoPhaseStartMs = 0;
+let capacityDemoRestoreStartTurns = 0;
+
+const capacityDemoBtn = document.getElementById('capacityDemoBtn');
+const capacityDemoPctValEl = document.getElementById('capacityDemoPctVal');
+const capacityDemoThreshValEl = document.getElementById('capacityDemoThreshVal');
+const capacityDemoStateEl = document.getElementById('capacityDemoState');
+const capacityDemoStateTextEl = document.getElementById('capacityDemoStateText');
+const capacityDemoStateSubEl = document.getElementById('capacityDemoStateSub');
+
+function setCapacityDemoStateBox(text, sub, color, bg) {
+  capacityDemoStateTextEl.textContent = text;
+  capacityDemoStateSubEl.textContent = sub;
+  capacityDemoStateEl.style.borderColor = color;
+  capacityDemoStateEl.style.background = bg;
+}
+
+capacityDemoBtn.addEventListener('click', () => {
+  if (capacityDemoPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE') return;
+  setScenarioControlsEnabled(false);
+  capacityDemoBtn.textContent = '▶ Running…';
+  rigMotionActive = true;
+
+  // This demo is specifically about the CAPACITY path, not the separate
+  // fault-fails-closed path -- same reasoning as the other demos turning
+  // off tension-drive first, just a different stray-state to clear.
+  encoderFaultInput.checked = false;
+
+  // Preload spooled capacity just above the current block threshold
+  // (turnsForLength is the same bisection inverse the capacity model
+  // already exposes) so the run only has to deplete a small amount rather
+  // than from a completely full drum. Buffered off blockPct specifically,
+  // NOT max(block%, warn%) -- warn defaults higher than block (25 vs 20),
+  // so buffering off the max meant depleting 8 points instead of 3 and
+  // blowing through the safety cutoff before ever tripping, caught live.
+  // Starting inside the warn band first (as this now does whenever
+  // warn > block) is fine -- if anything it's a better demo, showing WARN
+  // before BLOCKED instead of skipping straight to red.
+  const blockNow = parseFloat(blockPctInput.value) || 0;
+  const startPct = Math.max(1, Math.min(99, blockNow + CAPACITY_DEMO_START_BUFFER_PCT));
+  turnsRemaining = turnsForLength(DRUM_L_MAX_M * startPct / 100);
+  trammingBlocked = false;
+
+  capacityDemoPhase = 'DEPLETE';
+  capacityDemoPhaseStartMs = performance.now();
+});
+
+function updateCapacityDemo(nowMs) {
+  const elapsedMs = nowMs - capacityDemoPhaseStartMs;
+  const blockNow = parseFloat(blockPctInput.value) || 0;
+  const rearmNow = parseFloat(rearmMarginInput.value) || 0;
+  const capacityPctNow = 100 * lengthFromTurns(turnsRemaining) / DRUM_L_MAX_M;
+  capacityDemoThreshValEl.textContent = `${blockNow.toFixed(1)}% / ${(blockNow + rearmNow).toFixed(1)}%`;
+  capacityDemoPctValEl.textContent = `${capacityPctNow.toFixed(1)}%`;
+
+  if (capacityDemoPhase === 'DEPLETE') {
+    // Tracks only actually move for the first CAPACITY_DEMO_TRAM_MS --
+    // deflection saturates near its ceiling well before that elapses, so
+    // continuing to tram longer just pushes the rig off-grid for no
+    // benefit. After that the tracks stop but the PHASE keeps waiting: the
+    // now-constant deflection keeps commanding UNREEL at whatever duty it
+    // produced, and capacity keeps draining at that real rate until it
+    // actually crosses the block threshold.
+    const tramming = elapsedMs < CAPACITY_DEMO_TRAM_MS;
+    leftTrackSpeed = rightTrackSpeed = tramming ? MAX_TRACK_SPEED : 0; // away from the supply -- same direction/sign as Rig Motion's own FORWARD phase
+    setCapacityDemoStateBox('DEPLETING', tramming
+      ? `capacity ${capacityPctNow.toFixed(1)}%, tramming away`
+      : `capacity ${capacityPctNow.toFixed(1)}%, holding away, waiting on interlock`, 'var(--accent)', 'rgba(79,143,240,0.12)');
+    // trammingBlocked itself is updated later in stepReelTrim (after this
+    // runs), so this reads last frame's value -- one frame of lag, same
+    // order of magnitude as other cross-system reads in this file, not
+    // worth restructuring stepReelTrim's phase order over.
+    if (trammingBlocked || elapsedMs >= CAPACITY_DEMO_SAFETY_MS) {
+      leftTrackSpeed = rightTrackSpeed = 0;
+      capacityDemoPhase = 'BLOCKED_HOLD';
+      capacityDemoPhaseStartMs = nowMs;
+    }
+
+  } else if (capacityDemoPhase === 'BLOCKED_HOLD') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setCapacityDemoStateBox('TRAM BLOCKED', `capacity ${capacityPctNow.toFixed(1)}%, at/below ${blockNow.toFixed(1)}%`, 'var(--warn)', 'rgba(226,87,76,0.12)');
+    if (elapsedMs >= CAPACITY_DEMO_BLOCKED_HOLD_MS) {
+      capacityDemoRestoreStartTurns = turnsRemaining;
+      capacityDemoPhase = 'RESTORE';
+      capacityDemoPhaseStartMs = nowMs;
+    }
+
+  } else if (capacityDemoPhase === 'RESTORE') {
+    // Tracks tram back for the same bounded CAPACITY_DEMO_TRAM_MS DEPLETE
+    // uses, so the motion still reads as "returning toward the supply" --
+    // but capacity itself is eased back up directly over
+    // CAPACITY_DEMO_RESTORE_MS rather than left to real REEL IN, per this
+    // constant's own comment above.
+    const tramming = elapsedMs < CAPACITY_DEMO_TRAM_MS;
+    leftTrackSpeed = rightTrackSpeed = tramming ? -MAX_TRACK_SPEED : 0; // back toward the supply -- same direction/sign as Rig Motion's own BACKWARD phase
+    const targetPct = blockNow + rearmNow + CAPACITY_DEMO_RESTORE_OVERSHOOT_PCT;
+    const targetTurns = turnsForLength(DRUM_L_MAX_M * Math.min(99, targetPct) / 100);
+    const t = Math.min(1, elapsedMs / CAPACITY_DEMO_RESTORE_MS);
+    const eased = t * t * (3 - 2 * t); // smoothstep, same shape the drill bit's lower/raise already uses
+    turnsRemaining = capacityDemoRestoreStartTurns + (targetTurns - capacityDemoRestoreStartTurns) * eased;
+    setCapacityDemoStateBox('RESTORING', `capacity ${capacityPctNow.toFixed(1)}%, tramming back`, 'var(--accent)', 'rgba(79,143,240,0.12)');
+    if (t >= 1) {
+      leftTrackSpeed = rightTrackSpeed = 0;
+      // rigMotionActive drops here, not at the final IDLE cleanup below --
+      // caught live: deflection was still saturated "away" at whatever
+      // position the rig parked at, and as long as rigMotionActive stayed
+      // true, updateRigMotion kept re-deriving and reapplying that same
+      // deflection every frame through the whole CLEARED hold, so the real
+      // pipeline kept commanding UNREEL and capacity drained itself right
+      // back below the block threshold DURING the "REARMED" state -- the
+      // demo would visibly re-trip the interlock it had just cleared.
+      // Zeroing deflection now (once, not re-derived) stops that for good.
+      rigMotionActive = false;
+      a0Deg.value = 0;
+      a1Deg.value = 0;
+      render();
+      capacityDemoPhase = 'CLEARED';
+      capacityDemoPhaseStartMs = nowMs;
+    }
+
+  } else if (capacityDemoPhase === 'CLEARED') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setCapacityDemoStateBox('REARMED', `capacity ${capacityPctNow.toFixed(1)}%, tram allowed again`, 'var(--good)', 'rgba(79,191,122,0.12)');
+    if (elapsedMs >= CAPACITY_DEMO_CLEARED_MS) {
+      capacityDemoPhase = 'IDLE';
+      capacityDemoBtn.textContent = '▶ Run Capacity Interlock Stress Demo';
+      setScenarioControlsEnabled(true);
+      setCapacityDemoStateBox('IDLE', 'not running', 'var(--border)', 'transparent');
+    }
+  }
 }
 
 function render() {
