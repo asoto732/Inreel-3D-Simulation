@@ -52,6 +52,15 @@
   }
   button:hover { color: var(--text); border-color: var(--text-dim); }
   .note { font-size: 11.5px; color: var(--text-dim); border-top: 1px dashed var(--border); margin-top: 14px; padding-top: 12px; line-height: 1.5; }
+  /* Brief pulse on a real threshold-zone transition (Capacity Interlock
+     Stress demo's response box) -- one box-shadow ring expanding and
+     fading, so crossing warn/block/rearm reads as a moment, not just a
+     background color that happened to change. */
+  @keyframes notifyFlash {
+    0% { box-shadow: 0 0 0 0 var(--notify-color, var(--warn)); }
+    100% { box-shadow: 0 0 0 10px transparent; }
+  }
+  .notify-flash { animation: notifyFlash 0.7s ease-out; }
   .canvas-wrap { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: #05070a; height: 460px; cursor: grab; }
   .canvas-wrap:active { cursor: grabbing; }
   .legend { display: flex; gap: 16px; font-size: 11.5px; color: var(--text-dim); margin-top: 10px; flex-wrap: wrap; }
@@ -64,29 +73,170 @@
   .tag.in { background: rgba(79,191,122,0.15); color: var(--good); }
   .tag.out { background: rgba(226,87,76,0.15); color: var(--warn); }
 
-  .sticky-reel-badge {
+  /* Live dashboard: fixed top-right, stays in view regardless of scroll --
+     collapsed by default to a small pill (command + duty, same as the old
+     sticky-reel-badge), expands on click into a wider panel holding the
+     compact axis/capacity readouts plus the (relocated, not duplicated)
+     control logic diagram + timeline, so a running demo stays fully
+     readable without scrolling down to find any of it. */
+  .sticky-dashboard {
     position: fixed; top: 14px; right: 14px; z-index: 100;
-    display: flex; align-items: center; gap: 8px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
-    padding: 6px 14px 6px 10px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
-    transition: border-color .1s, background .1s;
+    width: 300px; max-height: calc(100vh - 28px);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
     font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+    transition: width .15s;
   }
-  .sticky-reel-badge:hover { border-color: var(--text-dim); }
-  .sticky-reel-badge .dot { width: 9px; height: 9px; flex-shrink: 0; transition: background .05s, box-shadow .05s; }
+  .sticky-dashboard.sd-wide { width: 460px; }
+  .sticky-reel-badge {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; cursor: pointer; flex-shrink: 0;
+    transition: background .1s;
+  }
+  .sticky-reel-badge:hover { background: var(--panel-2); }
+  .sticky-reel-badge .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; transition: background .05s, box-shadow .05s; }
   .sticky-reel-badge .label { font-family: var(--mono); font-size: 12.5px; font-weight: 600; letter-spacing: 0.04em; color: var(--text); white-space: nowrap; }
   .sticky-reel-badge .duty { font-family: var(--mono); font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+  .sticky-reel-badge .sd-chev { margin-left: auto; color: var(--text-dim); font-size: 9px; }
+  .sd-body { padding: 0 12px 12px; overflow-y: auto; border-top: 1px solid var(--border); }
+  .sd-body.sd-collapsed { display: none; }
+  .sd-axis-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 11px; }
+  .sd-axis-row:last-of-type { border-bottom: none; }
+  .sd-axis-name { font-weight: 600; width: 44px; flex-shrink: 0; }
+  .sd-axis-row .mono { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  .sd-axis-deg { width: 44px; flex-shrink: 0; }
+  .sd-axis-dz { flex: 1; }
+  .sd-capacity {
+    margin-top: 8px; padding: 7px 10px; border-radius: 8px; text-align: center;
+    font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: 0.03em;
+    border: 1px solid var(--border); transition: background .1s, border-color .1s, color .1s;
+  }
   @media (max-width: 520px) {
-    .sticky-reel-badge { top: 8px; right: 8px; padding: 5px 10px 5px 8px; }
+    .sticky-dashboard, .sticky-dashboard.sd-wide { top: 8px; right: 8px; left: 8px; width: auto; }
     .sticky-reel-badge .duty { display: none; }
   }
 </style>
 </head>
 <body>
-<div class="sticky-reel-badge" id="stickyReelBadge" title="Jump to reel trim output">
-  <span class="dot" id="stickyReelDot"></span>
-  <span class="label" id="stickyReelLabel">HOLD</span>
-  <span class="duty" id="stickyReelDuty">0%</span>
+<div class="sticky-dashboard" id="stickyDashboard">
+  <div class="sticky-reel-badge" id="stickyReelBadge" title="Expand/collapse the live dashboard">
+    <span class="dot" id="stickyReelDot"></span>
+    <span class="label" id="stickyReelLabel">HOLD</span>
+    <span class="duty" id="stickyReelDuty">0%</span>
+    <span class="sd-chev" id="sdChev">&#9660;</span>
+  </div>
+  <div class="sd-body sd-collapsed" id="sdBody">
+    <div class="sd-axis-row">
+      <span class="sd-axis-name" style="color:#4f8ff0">Axis 0</span>
+      <span class="mono sd-axis-deg" id="sdAxis0Deg">0.0&deg;</span>
+      <span class="tag out sd-axis-dz" id="sdAxis0Dz">active</span>
+      <span class="mono" id="sdAxis0Vec">0</span>
+    </div>
+    <div class="sd-axis-row">
+      <span class="sd-axis-name" style="color:#f0a24f">Axis 1</span>
+      <span class="mono sd-axis-deg" id="sdAxis1Deg">0.0&deg;</span>
+      <span class="tag out sd-axis-dz" id="sdAxis1Dz">active</span>
+      <span class="mono" id="sdAxis1Vec">0</span>
+    </div>
+    <div class="sd-capacity" id="sdCapacity">TRAM ALLOWED</div>
+
+    <button id="cldToggleBtn" style="width:100%; margin-top:10px;">&#9660; Show control logic diagram</button>
+    <div id="controlDiagramPanel" class="axis-block" style="display:none; margin-bottom:0;">
+      <div class="axis-title" style="margin-bottom:2px;">
+        Control logic diagram <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; live, updates every frame</span>
+      </div>
+      <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+        Same reference architecture as the real system: sensors &rarr; deflection computer &rarr;
+        tension computer &rarr; motor controller &rarr; motor, with velocity and cable-length
+        feedback running back the other way. Every value is read from the exact same state the
+        rest of this page uses, nothing here is a separate calculation. An arrow briefly glows
+        when the value it carries changes meaningfully &mdash; watch it during a preset or the
+        Obstacle Snag scenario to see data actually moving through the chain.
+      </div>
+      <svg id="cldSvg" viewBox="0 0 950 245" style="width:100%; height:auto; display:block; overflow:visible;">
+        <defs>
+          <marker id="cldArrowHead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0,0 L10,5 L0,10 Z" fill="#9aa4b1"></path>
+          </marker>
+        </defs>
+
+        <!-- Boxes -->
+        <g style="fill:var(--panel-2); stroke:var(--border); stroke-width:1;">
+          <rect x="20" y="65" width="150" height="70" rx="6"></rect>
+          <rect x="210" y="65" width="150" height="70" rx="6"></rect>
+          <rect x="400" y="65" width="150" height="70" rx="6"></rect>
+          <rect x="590" y="65" width="150" height="70" rx="6"></rect>
+          <rect x="780" y="65" width="150" height="70" rx="6"></rect>
+        </g>
+        <g style="fill:var(--text); font-size:10.5px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
+          <text x="95" y="95">Deflection</text>
+          <text x="95" y="110">Measurement Device</text>
+          <text x="285" y="95">Deflection System</text>
+          <text x="285" y="110">Computer</text>
+          <text x="475" y="95">Tension Control</text>
+          <text x="475" y="110">Computer</text>
+          <text x="665" y="95">Cable Reel Motor</text>
+          <text x="665" y="110">Controller</text>
+          <text x="855" y="95">Cable Reel</text>
+          <text x="855" y="110">Motor</text>
+        </g>
+        <text id="cldTensionVal" x="475" y="127" style="fill:var(--text-dim); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">tension 0%</text>
+
+        <!-- Forward signal path: DMD -> DSC -> TCC -> CRMC -> CRM -->
+        <g style="stroke:#9aa4b1; stroke-width:2; fill:none;">
+          <line id="cldLine1" x1="170" y1="100" x2="208" y2="100" marker-end="url(#cldArrowHead)"></line>
+          <line id="cldLine2" x1="360" y1="100" x2="398" y2="100" marker-end="url(#cldArrowHead)"></line>
+          <line id="cldLine3" x1="550" y1="100" x2="588" y2="100" marker-end="url(#cldArrowHead)"></line>
+          <line id="cldLine4" x1="740" y1="100" x2="778" y2="100" marker-end="url(#cldArrowHead)"></line>
+        </g>
+        <g style="fill:var(--text-dim); font-size:8px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
+          <text x="190" y="32">Data of 2 Angle Sensors</text>
+          <text x="380" y="32">Resulting Deflection Data</text>
+          <text x="570" y="32">Speed/Torque Setpoints</text>
+          <text x="760" y="32">Motor Commands</text>
+        </g>
+        <g style="fill:var(--accent); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">
+          <text id="cldSensorVal" x="190" y="50">X 0.0&deg; &middot; Y 0.0&deg;</text>
+          <text id="cldFusedVal" x="380" y="50">mag 0 &middot; dir 0&deg;</text>
+          <text id="cldSetpointVal" x="570" y="50">ctrl 0.000 &middot; duty 0%</text>
+          <text id="cldCommandVal" x="760" y="50">HOLD &middot; 0%</text>
+        </g>
+
+        <!-- Feedback: CRM -> CRMC (Velocity Data), CRMC -> TCC (Cable Length Data) -->
+        <path id="cldLineVel" d="M 855,135 L 855,165 L 680,165 L 680,135" marker-end="url(#cldArrowHead)" style="stroke:#9aa4b1; stroke-width:2; fill:none;"></path>
+        <path id="cldLineLen" d="M 650,135 L 650,205 L 475,205 L 475,135" marker-end="url(#cldArrowHead)" style="stroke:#9aa4b1; stroke-width:2; fill:none;"></path>
+        <g style="fill:var(--text-dim); font-size:8px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
+          <text x="767" y="155">Velocity Data</text>
+          <text x="562" y="195">Cable Length Data</text>
+        </g>
+        <g style="fill:var(--accent-2); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">
+          <text id="cldVelocityVal" x="767" y="180">0.00 RPM</text>
+          <text id="cldLengthVal" x="562" y="220">0.00 u</text>
+        </g>
+      </svg>
+
+      <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+        <div class="axis-title" style="margin-bottom:2px;">
+          Timeline <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; last 20s, tension / duty / deflection</span>
+        </div>
+        <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+          Same three values as the readouts above, plotted over time instead
+          of only shown as an instantaneous number -- makes cause and effect
+          (a deflection spike driving a duty ramp driving a tension rise)
+          visible as a shape, not just numbers changing. Duty is signed
+          (above center = UNREEL, below = REEL IN), matching the sign
+          convention the command flash-channel above already uses.
+        </div>
+        <canvas id="cldTimelineCanvas" width="900" height="140" style="width:100%; height:140px; display:block; background:var(--panel-2); border:1px solid var(--border); border-radius:6px;"></canvas>
+        <div class="legend" style="margin-top:8px;">
+          <span><span class="dot" style="background:#e2574c"></span>Tension %</span>
+          <span><span class="dot" style="background:#4f8ff0"></span>Duty % (signed)</span>
+          <span><span class="dot" style="background:#f0a24f"></span>Deflection magnitude</span>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 <div class="wrap">
   <h1>Gimbal axis simulator</h1>
@@ -273,12 +423,21 @@
 
           <div class="two-col" style="margin-top:12px;">
             <div class="field"><label style="margin:0">Capacity <span class="val" id="capacityDemoPctVal">0.0%</span></label></div>
-            <div class="field"><label style="margin:0">Block / rearm at <span class="val" id="capacityDemoThreshVal">20.0% / 22.0%</span></label></div>
+            <div class="field"><label style="margin:0">Warn at <span class="val" id="capacityDemoWarnVal">25.0%</span></label></div>
+          </div>
+          <div class="two-col">
+            <div class="field"><label style="margin:0">Block at <span class="val" id="capacityDemoBlockVal">20.0%</span></label></div>
+            <div class="field"><label style="margin:0">Rearms at <span class="val" id="capacityDemoRearmVal">22.0%</span></label></div>
           </div>
 
           <div id="capacityDemoState" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; transition:background .1s, border-color .1s;">
             <div id="capacityDemoStateText" style="font-size:16px; font-weight:600; letter-spacing:0.05em; font-family:var(--mono);">IDLE</div>
             <div id="capacityDemoStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
+          </div>
+
+          <div id="capacityDemoResponse" style="margin-top:8px; border:1px solid var(--border); border-radius:8px; padding:10px 12px; transition:background .15s, border-color .15s;">
+            <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:3px;">Interlock response</div>
+            <div id="capacityDemoResponseText" style="font-size:12.5px; font-family:var(--mono); line-height:1.5;">capacity 100.0%, above both thresholds -- tram allowed</div>
           </div>
         </div>
 
@@ -415,100 +574,10 @@
         <span><span class="dot" style="background:#cfd4da"></span>Cable on the ground</span>
       </div>
 
-      <button id="cldToggleBtn" style="width:100%;">&#9660; Show control logic diagram</button>
-      <div id="controlDiagramPanel" class="axis-block" style="display:none; margin-bottom:0;">
-        <div class="axis-title" style="margin-bottom:2px;">
-          Control logic diagram <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; live, updates every frame</span>
-        </div>
-        <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
-          Same reference architecture as the real system: sensors &rarr; deflection computer &rarr;
-          tension computer &rarr; motor controller &rarr; motor, with velocity and cable-length
-          feedback running back the other way. Every value is read from the exact same state the
-          rest of this page uses, nothing here is a separate calculation. An arrow briefly glows
-          when the value it carries changes meaningfully &mdash; watch it during a preset or the
-          Obstacle Snag scenario to see data actually moving through the chain.
-        </div>
-        <svg id="cldSvg" viewBox="0 0 950 245" style="width:100%; height:auto; display:block; overflow:visible;">
-          <defs>
-            <marker id="cldArrowHead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-              <path d="M0,0 L10,5 L0,10 Z" fill="#9aa4b1"></path>
-            </marker>
-          </defs>
-
-          <!-- Boxes -->
-          <g style="fill:var(--panel-2); stroke:var(--border); stroke-width:1;">
-            <rect x="20" y="65" width="150" height="70" rx="6"></rect>
-            <rect x="210" y="65" width="150" height="70" rx="6"></rect>
-            <rect x="400" y="65" width="150" height="70" rx="6"></rect>
-            <rect x="590" y="65" width="150" height="70" rx="6"></rect>
-            <rect x="780" y="65" width="150" height="70" rx="6"></rect>
-          </g>
-          <g style="fill:var(--text); font-size:10.5px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
-            <text x="95" y="95">Deflection</text>
-            <text x="95" y="110">Measurement Device</text>
-            <text x="285" y="95">Deflection System</text>
-            <text x="285" y="110">Computer</text>
-            <text x="475" y="95">Tension Control</text>
-            <text x="475" y="110">Computer</text>
-            <text x="665" y="95">Cable Reel Motor</text>
-            <text x="665" y="110">Controller</text>
-            <text x="855" y="95">Cable Reel</text>
-            <text x="855" y="110">Motor</text>
-          </g>
-          <text id="cldTensionVal" x="475" y="127" style="fill:var(--text-dim); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">tension 0%</text>
-
-          <!-- Forward signal path: DMD -> DSC -> TCC -> CRMC -> CRM -->
-          <g style="stroke:#9aa4b1; stroke-width:2; fill:none;">
-            <line id="cldLine1" x1="170" y1="100" x2="208" y2="100" marker-end="url(#cldArrowHead)"></line>
-            <line id="cldLine2" x1="360" y1="100" x2="398" y2="100" marker-end="url(#cldArrowHead)"></line>
-            <line id="cldLine3" x1="550" y1="100" x2="588" y2="100" marker-end="url(#cldArrowHead)"></line>
-            <line id="cldLine4" x1="740" y1="100" x2="778" y2="100" marker-end="url(#cldArrowHead)"></line>
-          </g>
-          <g style="fill:var(--text-dim); font-size:8px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
-            <text x="190" y="32">Data of 2 Angle Sensors</text>
-            <text x="380" y="32">Resulting Deflection Data</text>
-            <text x="570" y="32">Speed/Torque Setpoints</text>
-            <text x="760" y="32">Motor Commands</text>
-          </g>
-          <g style="fill:var(--accent); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">
-            <text id="cldSensorVal" x="190" y="50">X 0.0&deg; &middot; Y 0.0&deg;</text>
-            <text id="cldFusedVal" x="380" y="50">mag 0 &middot; dir 0&deg;</text>
-            <text id="cldSetpointVal" x="570" y="50">ctrl 0.000 &middot; duty 0%</text>
-            <text id="cldCommandVal" x="760" y="50">HOLD &middot; 0%</text>
-          </g>
-
-          <!-- Feedback: CRM -> CRMC (Velocity Data), CRMC -> TCC (Cable Length Data) -->
-          <path id="cldLineVel" d="M 855,135 L 855,165 L 680,165 L 680,135" marker-end="url(#cldArrowHead)" style="stroke:#9aa4b1; stroke-width:2; fill:none;"></path>
-          <path id="cldLineLen" d="M 650,135 L 650,205 L 475,205 L 475,135" marker-end="url(#cldArrowHead)" style="stroke:#9aa4b1; stroke-width:2; fill:none;"></path>
-          <g style="fill:var(--text-dim); font-size:8px; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; text-anchor:middle;">
-            <text x="767" y="155">Velocity Data</text>
-            <text x="562" y="195">Cable Length Data</text>
-          </g>
-          <g style="fill:var(--accent-2); font-size:9.5px; font-family:var(--mono); text-anchor:middle;">
-            <text id="cldVelocityVal" x="767" y="180">0.00 RPM</text>
-            <text id="cldLengthVal" x="562" y="220">0.00 u</text>
-          </g>
-        </svg>
-
-        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
-          <div class="axis-title" style="margin-bottom:2px;">
-            Timeline <span style="font-weight:400; color:var(--text-dim); font-size:11px;">&mdash; last 20s, tension / duty / deflection</span>
-          </div>
-          <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
-            Same three values as the readouts above, plotted over time instead
-            of only shown as an instantaneous number -- makes cause and effect
-            (a deflection spike driving a duty ramp driving a tension rise)
-            visible as a shape, not just numbers changing. Duty is signed
-            (above center = UNREEL, below = REEL IN), matching the sign
-            convention the command flash-channel above already uses.
-          </div>
-          <canvas id="cldTimelineCanvas" width="900" height="140" style="width:100%; height:140px; display:block; background:var(--panel-2); border:1px solid var(--border); border-radius:6px;"></canvas>
-          <div class="legend" style="margin-top:8px;">
-            <span><span class="dot" style="background:#e2574c"></span>Tension %</span>
-            <span><span class="dot" style="background:#4f8ff0"></span>Duty % (signed)</span>
-            <span><span class="dot" style="background:#f0a24f"></span>Deflection magnitude</span>
-          </div>
-        </div>
+      <div class="note" style="margin-top:0; margin-bottom:0; border-top:none; padding-top:0;">
+        The live control logic diagram and timeline moved to the dashboard
+        pinned at the top-right of the page (click it to expand) -- visible
+        there without scrolling, including while any demo is running.
       </div>
 
       <table>
@@ -2706,10 +2775,15 @@ let capacityDemoRestoreStartTurns = 0;
 
 const capacityDemoBtn = document.getElementById('capacityDemoBtn');
 const capacityDemoPctValEl = document.getElementById('capacityDemoPctVal');
-const capacityDemoThreshValEl = document.getElementById('capacityDemoThreshVal');
+const capacityDemoWarnValEl = document.getElementById('capacityDemoWarnVal');
+const capacityDemoBlockValEl = document.getElementById('capacityDemoBlockVal');
+const capacityDemoRearmValEl = document.getElementById('capacityDemoRearmVal');
 const capacityDemoStateEl = document.getElementById('capacityDemoState');
 const capacityDemoStateTextEl = document.getElementById('capacityDemoStateText');
 const capacityDemoStateSubEl = document.getElementById('capacityDemoStateSub');
+const capacityDemoResponseEl = document.getElementById('capacityDemoResponse');
+const capacityDemoResponseTextEl = document.getElementById('capacityDemoResponseText');
+let capacityDemoLastZone = null; // ALLOWED | WARN | BLOCKED -- tracked only to notice a real transition, not read elsewhere
 
 function setCapacityDemoStateBox(text, sub, color, bg) {
   capacityDemoStateTextEl.textContent = text;
@@ -2751,10 +2825,47 @@ capacityDemoBtn.addEventListener('click', () => {
 function updateCapacityDemo(nowMs) {
   const elapsedMs = nowMs - capacityDemoPhaseStartMs;
   const blockNow = parseFloat(blockPctInput.value) || 0;
+  const warnNow = parseFloat(warnPctInput.value) || 0;
   const rearmNow = parseFloat(rearmMarginInput.value) || 0;
   const capacityPctNow = 100 * lengthFromTurns(turnsRemaining) / DRUM_L_MAX_M;
-  capacityDemoThreshValEl.textContent = `${blockNow.toFixed(1)}% / ${(blockNow + rearmNow).toFixed(1)}%`;
   capacityDemoPctValEl.textContent = `${capacityPctNow.toFixed(1)}%`;
+  capacityDemoWarnValEl.textContent = `${warnNow.toFixed(1)}%`;
+  capacityDemoBlockValEl.textContent = `${blockNow.toFixed(1)}%`;
+  capacityDemoRearmValEl.textContent = `${(blockNow + rearmNow).toFixed(1)}%`;
+
+  // Same verdict the real interlock further down in stepReelTrim computes
+  // (trammingBlocked is that same shared hysteresis flag, not a copy) --
+  // mirrored here rather than threaded through as extra parameters, since
+  // this reads it a frame ahead of when stepReelTrim's own capacity block
+  // runs (same one-frame-lag tradeoff already made for trammingBlocked
+  // itself, documented in the DEPLETE phase below).
+  const encoderFaultNow = encoderFaultInput.checked;
+  const blockedNow = encoderFaultNow || trammingBlocked;
+  const warnNowActive = !blockedNow && capacityPctNow <= warnNow;
+  const zone = blockedNow ? 'BLOCKED' : (warnNowActive ? 'WARN' : 'ALLOWED');
+  const zoneColor = blockedNow ? 'var(--warn)' : (warnNowActive ? '#e0a83c' : 'var(--good)');
+  const zoneBg = blockedNow ? 'rgba(226,87,76,0.12)' : (warnNowActive ? 'rgba(224,168,60,0.12)' : 'rgba(79,191,122,0.10)');
+  capacityDemoResponseTextEl.textContent = encoderFaultNow
+    ? 'encoder fault simulated -- fails closed regardless of capacity'
+    : blockedNow
+      ? `capacity ${capacityPctNow.toFixed(1)}% at/below block threshold ${blockNow.toFixed(1)}% -- tram rejected until it climbs back above ${(blockNow + rearmNow).toFixed(1)}%`
+      : warnNowActive
+        ? `capacity ${capacityPctNow.toFixed(1)}% at/below warn threshold ${warnNow.toFixed(1)}% -- tram still allowed, approaching the block limit`
+        : `capacity ${capacityPctNow.toFixed(1)}% -- above both thresholds, tram allowed`;
+  capacityDemoResponseTextEl.style.color = zoneColor;
+  capacityDemoResponseEl.style.borderColor = zoneColor;
+  capacityDemoResponseEl.style.background = zoneBg;
+  // A real zone change (not just this frame's recomputation landing on the
+  // same zone again) gets an actual attention-grabbing pulse -- crossing
+  // into WARN, into BLOCKED, or clearing back to ALLOWED are the three
+  // moments worth calling out, not every frame the box happens to redraw.
+  if (capacityDemoLastZone !== null && zone !== capacityDemoLastZone) {
+    capacityDemoResponseEl.style.setProperty('--notify-color', zoneColor);
+    capacityDemoResponseEl.classList.remove('notify-flash');
+    void capacityDemoResponseEl.offsetWidth; // restart the animation even if one is still fading from a rapid double-transition
+    capacityDemoResponseEl.classList.add('notify-flash');
+  }
+  capacityDemoLastZone = zone;
 
   if (capacityDemoPhase === 'DEPLETE') {
     // Tracks only actually move for the first CAPACITY_DEMO_TRAM_MS --
@@ -3113,6 +3224,19 @@ function render() {
     </tr>`;
   outputRows.innerHTML = rowHtml('Axis 0, X', '#4f8ff0', r0) + rowHtml('Axis 1, Y', '#f0a24f', r1);
 
+  // Same r0/r1 the full table row above just used -- compact mirror in the
+  // pinned dashboard, not a recomputation.
+  const sdTag = (el, r) => {
+    el.textContent = r.inDeadzone ? 'in deadzone' : 'active';
+    el.className = 'tag sd-axis-dz ' + (r.inDeadzone ? 'in' : 'out');
+  };
+  sdAxis0DegEl.textContent = r0.degOut.toFixed(1) + '°';
+  sdTag(sdAxis0DzEl, r0);
+  sdAxis0VecEl.textContent = r0.vector;
+  sdAxis1DegEl.textContent = r1.degOut.toFixed(1) + '°';
+  sdTag(sdAxis1DzEl, r1);
+  sdAxis1VecEl.textContent = r1.vector;
+
   // Slider-to-group assignment, per the written requirements doc (2026-07-24):
   // "the inner yoke represents the x-axis of the deflection" / "the outer
   // yoke represents the y-axis of the deflection" -- so Axis 0 (d0, X)
@@ -3149,6 +3273,16 @@ function render() {
 // up whichever `render` is current.
 [a0Deg, a1Deg, a0Low, a0High, a0Zero, a1Low, a1High, a1Zero,
  fullScale, contribXInput, contribYInput, discardInput].forEach(el => el.addEventListener('input', () => render()));
+// Dashboard's compact axis mirror -- declared here, before render()'s own
+// initial synchronous call just below, since that call (not just the
+// function definition further up) is what actually needs these to exist.
+const sdAxis0DegEl = document.getElementById('sdAxis0Deg');
+const sdAxis0DzEl = document.getElementById('sdAxis0Dz');
+const sdAxis0VecEl = document.getElementById('sdAxis0Vec');
+const sdAxis1DegEl = document.getElementById('sdAxis1Deg');
+const sdAxis1DzEl = document.getElementById('sdAxis1Dz');
+const sdAxis1VecEl = document.getElementById('sdAxis1Vec');
+const sdCapacityEl = document.getElementById('sdCapacity');
 render();
 
 // ---------- Reel trim / PWM output, verified logic from control.cpp ----------
@@ -3477,15 +3611,19 @@ const reelStateSub = document.getElementById('reelStateSub');
 const stickyReelDot = document.getElementById('stickyReelDot');
 const stickyReelLabel = document.getElementById('stickyReelLabel');
 const stickyReelDuty = document.getElementById('stickyReelDuty');
-// Always-visible pinned readout of the same reel command shown in the full
-// "Reel trim output" panel further down -- that panel can scroll out of
-// view or sit inside a collapsed section, but the actual answer ("is the
-// reel doing anything right now") is the one thing worth never hiding.
-// Clicking it jumps to and opens the full panel for context.
+// Live dashboard, pinned top-right regardless of scroll (2026-08-10):
+// command+duty is always visible (collapsed state, unchanged from the old
+// sticky-reel-badge); clicking it expands a body with compact axis 0/1 and
+// capacity-interlock readouts plus the control logic diagram/timeline --
+// so a running demo (triggered from the panel on the left) stays fully
+// readable without scrolling down to find any of it. Full detail (the
+// complete Reel trim output table, axis table, and Cable capacity
+// interlock panel) still live further down for anyone wanting the rest.
+const sdBody = document.getElementById('sdBody');
+const sdChev = document.getElementById('sdChev');
 document.getElementById('stickyReelBadge').addEventListener('click', () => {
-  const panel = reelState.closest('details.axis-block');
-  if (panel && !panel.open) panel.open = true;
-  reelState.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const collapsed = sdBody.classList.toggle('sd-collapsed');
+  sdChev.innerHTML = collapsed ? '&#9660;' : '&#9650;';
 });
 const payoutValEl = document.getElementById('payoutVal');
 const maxPayoutInput = document.getElementById('maxPayout');
@@ -3512,10 +3650,15 @@ updateHangingCable(0, 'IDLE', 0, 0, 0); // tensionPct/whipDisp start at 0, same 
 // panel doesn't compute anything new, it just visualizes the existing chain.
 const cldToggleBtn = document.getElementById('cldToggleBtn');
 const controlDiagramPanel = document.getElementById('controlDiagramPanel');
+const stickyDashboard = document.getElementById('stickyDashboard');
 cldToggleBtn.addEventListener('click', () => {
   const showing = controlDiagramPanel.style.display !== 'none';
   controlDiagramPanel.style.display = showing ? 'none' : 'block';
   cldToggleBtn.innerHTML = showing ? '&#9660; Show control logic diagram' : '&#9650; Hide control logic diagram';
+  // The diagram's SVG needs real width to stay legible (it's a 950-unit-wide
+  // viewBox) -- widen the dashboard only while it's actually showing, so the
+  // collapsed/axis-only state stays as compact as possible otherwise.
+  stickyDashboard.classList.toggle('sd-wide', !showing);
 });
 
 const cldTensionValEl = document.getElementById('cldTensionVal');
@@ -4043,6 +4186,13 @@ function stepReelTrim() {
   trammingStateText.style.color = blocked ? 'var(--warn)' : (warn ? '#e0a83c' : 'var(--good)');
   trammingState.style.borderColor = blocked ? 'var(--warn)' : (warn ? '#e0a83c' : 'var(--good)');
   trammingState.style.background = blocked ? 'rgba(226,87,76,0.12)' : (warn ? 'rgba(224,168,60,0.12)' : 'transparent');
+
+  // Same blocked/warn just computed above -- compact mirror in the pinned
+  // dashboard, not a second interlock.
+  sdCapacityEl.textContent = blocked ? 'TRAM BLOCKED' : 'TRAM ALLOWED';
+  sdCapacityEl.style.color = blocked ? 'var(--warn)' : (warn ? '#e0a83c' : 'var(--good)');
+  sdCapacityEl.style.borderColor = blocked ? 'var(--warn)' : (warn ? '#e0a83c' : 'var(--good)');
+  sdCapacityEl.style.background = blocked ? 'rgba(226,87,76,0.12)' : (warn ? 'rgba(224,168,60,0.12)' : 'rgba(79,191,122,0.10)');
   trammingStateSub.textContent = encoderFault
     ? 'encoder fault simulated -- fails closed regardless of capacity'
     : trammingBlocked
