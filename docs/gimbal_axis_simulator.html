@@ -197,6 +197,36 @@
             <div id="rigStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
           </div>
         </div>
+
+        <div style="margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+          <div class="axis-title" style="margin-bottom:8px;">
+            2x2 Drill Pattern <span class="adv-tag" style="margin-left:0;">scripted, 4 holes</span>
+          </div>
+          <div class="note" style="margin-top:0; margin-bottom:10px; border-top:none; padding-top:0;">
+            Drives the rig to four hole locations in a 2x2 grid, serpentine
+            order so every leg is a short adjacent hop rather than a diagonal
+            crossing. Reuses the exact same track-speed/point-turn/tram model
+            as the Rig Motion Demo above -- this is that model driven to
+            waypoints instead of on a fixed timer. Deflection is NOT
+            controlled separately here either: it's still derived every
+            frame from the real gimbal-exit-to-power-supply geometry, so it
+            naturally swings as the rig relocates between holes. A small
+            mast-mounted bit near the front of the chassis lowers into the
+            ground and retracts at each stop -- purely decorative, it
+            doesn't feed the control pipeline.
+          </div>
+          <button id="drillPatternBtn" style="width:100%; margin-top:0;">&#9654; Run 2x2 Drill Pattern Demo</button>
+
+          <div class="two-col" style="margin-top:12px;">
+            <div class="field"><label style="margin:0">Hole <span class="val" id="drillHoleVal">0 / 4</span></label></div>
+            <div class="field"><label style="margin:0">Leg distance remaining <span class="val" id="drillDistVal">0.00 u</span></label></div>
+          </div>
+
+          <div id="drillState" style="margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:12px; text-align:center; transition:background .1s, border-color .1s;">
+            <div id="drillStateText" style="font-size:16px; font-weight:600; letter-spacing:0.05em; font-family:var(--mono);">IDLE</div>
+            <div id="drillStateSub" style="font-size:11px; color:var(--text-dim); margin-top:4px;">not running</div>
+          </div>
+        </div>
       </details>
 
       <details class="axis-block" style="border-left-color:#4f8ff0;">
@@ -1154,6 +1184,64 @@ mountingGuideMesh.position.copy(MOUNTING_ANCHOR_LOCAL);
 mountingGuideMesh.rotation.x = Math.PI / 2;
 rigGroup.add(mountingGuideMesh);
 
+// ---------- Drill mast + bit (2026-08-09) ----------
+// Purely decorative -- establishes WHY the rig is moving for the 2x2 Drill
+// Pattern demo further down, doesn't feed the control pipeline at all.
+// Mounted chassis-side (rig-local, under rigGroup) well outside the
+// barrel's X extent (barrel spans local X [-0.275, 0.275]) and the gimbal
+// ring's ~0.55 radius, so it reads as a separate accessory bolted near the
+// front of the chassis rather than part of the gimbal/mounting/barrel
+// assembly itself.
+const DRILL_MAST_LOCAL = new THREE.Vector3(0.95, 0, 1.05);
+const DRILL_BIT_UP_Y = 0.55; // retracted travel limit
+const DRILL_BIT_DOWN_Y = -0.04; // a hair below the ground plane so it visually bites in rather than just touching
+const drillMastMat = new THREE.MeshStandardMaterial({ color: 0x394451, roughness: 0.6, metalness: 0.3 });
+const drillMastGroup = new THREE.Group();
+drillMastGroup.position.copy(DRILL_MAST_LOCAL);
+rigGroup.add(drillMastGroup);
+const drillMastPost = new THREE.Mesh(new THREE.BoxGeometry(0.05, DRILL_BIT_UP_Y + 0.1, 0.05), drillMastMat);
+drillMastPost.position.y = (DRILL_BIT_UP_Y + 0.1) / 2; // fixed guide rail, spans ground to just above the bit's retracted height
+drillMastGroup.add(drillMastPost);
+
+const drillBitMat = new THREE.MeshStandardMaterial({ color: 0xf0a24f, roughness: 0.4, metalness: 0.5 });
+const drillBit = new THREE.Group(); // the part that actually travels -- see updateDrillPattern()'s LOWER/RAISE phases
+const drillBitBody = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.14, 12), drillBitMat);
+drillBitBody.position.y = 0.07;
+drillBit.add(drillBitBody);
+const drillBitTip = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.09, 12), drillBitMat);
+drillBitTip.position.y = -0.045;
+drillBit.add(drillBitTip);
+drillBit.position.set(0, DRILL_BIT_UP_Y, 0);
+drillMastGroup.add(drillBit);
+
+// ---------- 2x2 drill hole grid + completed-hole markers (2026-08-09) ----------
+// World-space, NOT rig-local -- these are fixed ground positions the rig
+// drives to, same relationship the power-supply anchor has to the rig.
+// HOLE_SPACING is the one configurable knob; DRILL_HOLES is ordered
+// serpentine (each hop shares an X or a Z with the previous hole, never a
+// diagonal) so the demo never needs a large reorienting turn between legs.
+const HOLE_SPACING = 0.9;
+const HOLE_GRID_CENTER = new THREE.Vector3(1.3, 0, 0.2); // clear of both the obstacle rock (~0.4,-0.9) and the power-supply pole (0,-1.4)
+const DRILL_HOLES = (() => {
+  const h = HOLE_SPACING / 2;
+  const c = HOLE_GRID_CENTER;
+  return [
+    new THREE.Vector3(c.x - h, 0, c.z + h), // 1: nearest the rig's start position
+    new THREE.Vector3(c.x + h, 0, c.z + h), // 2: adjacent to 1 (shares Z)
+    new THREE.Vector3(c.x + h, 0, c.z - h), // 3: adjacent to 2 (shares X)
+    new THREE.Vector3(c.x - h, 0, c.z - h), // 4: adjacent to 3 (shares Z) and to 1 (shares X) -- closes the loop
+  ];
+})();
+const drillHoleMarkerMat = new THREE.MeshStandardMaterial({ color: 0x4fbf7a, roughness: 0.8, metalness: 0.05 });
+const drillHoleMarkers = DRILL_HOLES.map(pos => {
+  const marker = new THREE.Mesh(new THREE.CircleGeometry(0.12, 20), drillHoleMarkerMat);
+  marker.rotation.x = -Math.PI / 2;
+  marker.position.set(pos.x, 0.006, pos.z); // just above the grid, avoids z-fighting
+  marker.visible = false; // revealed one at a time as updateDrillPattern() completes each hole
+  scene.add(marker);
+  return marker;
+});
+
 // ---------- Obstacle snag scenario: procedural obstacle mesh (2026-08-09) ----------
 // Simple placeholder geometry, no CAD import -- just a visual anchor for the
 // "Obstacle Snag" demo scenario further down, marking a snag point out to
@@ -1825,10 +1913,12 @@ const snagReelCommandEl = document.getElementById('snagReelCommand');
 function setScenarioControlsEnabled(enabled) {
   scenarioBtnEls.forEach(b => b.disabled = !enabled);
   obstacleSnagBtn.disabled = !enabled;
-  // Rig Motion Demo's own buttons too -- only one script (Obstacle Snag or
-  // Rig Motion, scripted or manual) should ever own a0Deg/a1Deg at a time.
+  // Rig Motion Demo's own buttons too -- only one script (Obstacle Snag,
+  // Rig Motion scripted/manual, or the Drill Pattern demo) should ever own
+  // a0Deg/a1Deg at a time.
   rigDemoBtn.disabled = !enabled;
   rigManualBtn.disabled = !enabled;
+  drillPatternBtn.disabled = !enabled;
   a0Deg.disabled = !enabled;
   a1Deg.disabled = !enabled ? true : tensionDrive.checked; // a1Deg's disabled state is otherwise owned by tensionDrive
 }
@@ -1982,7 +2072,7 @@ let rigDemoPhase = 'IDLE';
 let rigDemoPhaseStartMs = 0;
 
 rigDemoBtn.addEventListener('click', () => {
-  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive) return;
+  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive || drillPhase !== 'IDLE') return;
   setScenarioControlsEnabled(false);
   rigDemoBtn.textContent = '▶ Running…';
   rigMotionActive = true;
@@ -2056,7 +2146,7 @@ rigManualBtn.addEventListener('click', () => {
     setRigStateBox('PARKED', 'not running', 'var(--border)', 'transparent');
     return;
   }
-  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE') return;
+  if (rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || drillPhase !== 'IDLE') return;
   rigManualActive = true;
   rigMotionActive = true;
   setScenarioControlsEnabled(false);
@@ -2106,6 +2196,7 @@ function updateRigMotion(nowMs) {
 
   if (rigDemoPhase !== 'IDLE') updateRigDemoScript(nowMs);
   if (rigManualActive) updateRigManualDrive();
+  if (drillPhase !== 'IDLE') updateDrillPattern(nowMs, rigDt);
 
   if (!rigMotionActive) { feedforwardTerm = 0; return; }
 
@@ -2179,6 +2270,149 @@ function updateRigMotion(nowMs) {
   rigSpeedValEl.textContent = `${rigForwardSpeed.toFixed(2)} u/s`;
   rigDeflectionValEl.textContent = `X ${d0deg.toFixed(1)}° · Y ${d1deg.toFixed(1)}°`;
   rigDistanceValEl.textContent = `${distanceToSupply.toFixed(2)} u`;
+}
+
+// ---------- 2x2 Drill Pattern demo: waypoint nav on top of the same model (2026-08-09) ----------
+// Not a new movement system -- this drives leftTrackSpeed/rightTrackSpeed
+// with the exact same point-turn and tram patterns updateRigDemoScript
+// uses (same MAX_TRACK_SPEED, same 0.97 asymmetric point-turn factor), just
+// gated on reaching a heading/position instead of a fixed timer, since
+// "go to this hole" needs closed-loop arrival rather than an open-loop
+// duration. The kinematic integration and deflection derivation in
+// updateRigMotion() below are untouched and unduplicated -- this only ever
+// writes leftTrackSpeed/rightTrackSpeed and rigMotionActive, same as the
+// scripted tram/turn demo and manual drive both already do.
+const DRILL_TURN_DONE_RAD = 0.02; // ~1.1 degrees
+const DRILL_ARRIVE_DIST = 0.06;
+const DRILL_LOWER_MS = 700, DRILL_HOLD_MS = 500, DRILL_RAISE_MS = 700, DRILL_DONE_MS = 1200;
+// Wider/top-down default so all four holes and the power-supply anchor
+// stay in frame -- the close chase-style default view was tuned for the
+// single fixed gimbal location the other demos use.
+const DRILL_CAMERA_VIEW = { azimuth: 0.35, elevation: 1.25, radius: 4.6, target: new THREE.Vector3(0.6, 0.2, 0.05) };
+
+let drillPhase = 'IDLE'; // IDLE | TURN | TRAM | LOWER | HOLD | RAISE | DONE
+let drillHoleIndex = 0;
+let drillPhaseStartMs = 0;
+
+const drillPatternBtn = document.getElementById('drillPatternBtn');
+const drillHoleValEl = document.getElementById('drillHoleVal');
+const drillDistValEl = document.getElementById('drillDistVal');
+const drillStateEl = document.getElementById('drillState');
+const drillStateTextEl = document.getElementById('drillStateText');
+const drillStateSubEl = document.getElementById('drillStateSub');
+
+function setDrillStateBox(text, sub, color, bg) {
+  drillStateTextEl.textContent = text;
+  drillStateSubEl.textContent = sub;
+  drillStateEl.style.borderColor = color;
+  drillStateEl.style.background = bg;
+}
+
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+drillPatternBtn.addEventListener('click', () => {
+  if (drillPhase !== 'IDLE' || rigDemoPhase !== 'IDLE' || snagPhase !== 'IDLE' || rigManualActive) return;
+  setScenarioControlsEnabled(false);
+  drillPatternBtn.textContent = '▶ Running…';
+  rigMotionActive = true;
+  drillHoleIndex = 0;
+  drillPhase = 'TURN';
+  drillPhaseStartMs = performance.now();
+  drillHoleMarkers.forEach(m => m.visible = false); // fresh run, fresh grid
+
+  azimuth = DRILL_CAMERA_VIEW.azimuth;
+  elevation = DRILL_CAMERA_VIEW.elevation;
+  radius = DRILL_CAMERA_VIEW.radius;
+  target.copy(DRILL_CAMERA_VIEW.target);
+  updateCamera();
+  draw();
+});
+
+// Called from updateRigMotion() every frame the pattern is running --
+// rigDt is the SAME clamped delta updateRigMotion already computed this
+// frame, not a separate timer.
+function updateDrillPattern(nowMs, rigDt) {
+  const elapsedMs = nowMs - drillPhaseStartMs;
+  const hole = DRILL_HOLES[Math.min(drillHoleIndex, DRILL_HOLES.length - 1)];
+  const dx = hole.x - rigGroup.position.x;
+  const dz = hole.z - rigGroup.position.z;
+  const dist = Math.hypot(dx, dz);
+
+  if (drillPhase === 'TURN') {
+    const desiredYaw = Math.atan2(dx, dz);
+    const err = normalizeAngle(desiredYaw - rigYaw);
+    if (Math.abs(err) > DRILL_TURN_DONE_RAD) {
+      // Same asymmetric point-turn pair updateRigDemoScript's TURN_LEFT/
+      // TURN_RIGHT phases use, just picked by sign of the heading error
+      // instead of always going one fixed direction.
+      if (err > 0) { leftTrackSpeed = -MAX_TRACK_SPEED * 0.97; rightTrackSpeed = MAX_TRACK_SPEED; }
+      else { leftTrackSpeed = MAX_TRACK_SPEED; rightTrackSpeed = -MAX_TRACK_SPEED * 0.97; }
+      setDrillStateBox(`HOLE ${drillHoleIndex + 1}/4: TURNING`, `heading error ${THREE.MathUtils.radToDeg(err).toFixed(1)}°`, 'var(--warn)', 'rgba(226,87,76,0.12)');
+    } else {
+      leftTrackSpeed = rightTrackSpeed = 0;
+      drillPhase = 'TRAM';
+    }
+
+  } else if (drillPhase === 'TRAM') {
+    if (dist > DRILL_ARRIVE_DIST) {
+      leftTrackSpeed = rightTrackSpeed = MAX_TRACK_SPEED;
+      setDrillStateBox(`HOLE ${drillHoleIndex + 1}/4: TRAMMING`, `${dist.toFixed(2)} u remaining`, 'var(--accent)', 'rgba(79,143,240,0.12)');
+    } else {
+      leftTrackSpeed = rightTrackSpeed = 0;
+      drillPhase = 'LOWER';
+      drillPhaseStartMs = nowMs;
+    }
+
+  } else if (drillPhase === 'LOWER') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    const t = Math.min(1, elapsedMs / DRILL_LOWER_MS);
+    const eased = t * t * (3 - 2 * t); // smoothstep
+    drillBit.position.y = DRILL_BIT_UP_Y + (DRILL_BIT_DOWN_Y - DRILL_BIT_UP_Y) * eased;
+    setDrillStateBox(`HOLE ${drillHoleIndex + 1}/4: DRILLING`, 'lowering bit', 'var(--warn)', 'rgba(226,87,76,0.12)');
+    if (t >= 1) { drillPhase = 'HOLD'; drillPhaseStartMs = nowMs; }
+
+  } else if (drillPhase === 'HOLD') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setDrillStateBox(`HOLE ${drillHoleIndex + 1}/4: DRILLING`, 'holding at depth', 'var(--warn)', 'rgba(226,87,76,0.12)');
+    if (elapsedMs >= DRILL_HOLD_MS) { drillPhase = 'RAISE'; drillPhaseStartMs = nowMs; }
+
+  } else if (drillPhase === 'RAISE') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    const t = Math.min(1, elapsedMs / DRILL_RAISE_MS);
+    const eased = t * t * (3 - 2 * t);
+    drillBit.position.y = DRILL_BIT_DOWN_Y + (DRILL_BIT_UP_Y - DRILL_BIT_DOWN_Y) * eased;
+    setDrillStateBox(`HOLE ${drillHoleIndex + 1}/4: RETRACTING`, 'raising bit', 'var(--good)', 'rgba(79,191,122,0.12)');
+    if (t >= 1) {
+      drillBit.position.y = DRILL_BIT_UP_Y;
+      drillHoleMarkers[drillHoleIndex].visible = true;
+      drillHoleIndex++;
+      if (drillHoleIndex < DRILL_HOLES.length) {
+        drillPhase = 'TURN';
+        drillPhaseStartMs = nowMs;
+      } else {
+        drillPhase = 'DONE';
+        drillPhaseStartMs = nowMs;
+      }
+    }
+
+  } else if (drillPhase === 'DONE') {
+    leftTrackSpeed = rightTrackSpeed = 0;
+    setDrillStateBox('PATTERN COMPLETE', 'all 4 holes drilled', 'var(--good)', 'rgba(79,191,122,0.12)');
+    if (elapsedMs >= DRILL_DONE_MS) {
+      drillPhase = 'IDLE';
+      rigMotionActive = false;
+      drillPatternBtn.textContent = '▶ Run 2x2 Drill Pattern Demo';
+      setScenarioControlsEnabled(true);
+      setDrillStateBox('IDLE', 'not running', 'var(--border)', 'transparent');
+    }
+  }
+
+  drillHoleValEl.textContent = `${Math.min(drillHoleIndex + 1, DRILL_HOLES.length)} / ${DRILL_HOLES.length}`;
+  drillDistValEl.textContent = (drillPhase === 'TURN' || drillPhase === 'TRAM') ? `${dist.toFixed(2)} u` : '0.00 u';
 }
 
 function render() {
